@@ -75,7 +75,7 @@ jobs:
           repository: gobansource/code-coverage
           ref: main
           path: pages
-          #token: ${{ secrets.PAT_PUB_REPO }}
+          token: ${{ secrets.PAT_CODE_COVERAGE }}
 
       - name: upload codecoverage
         run: |
