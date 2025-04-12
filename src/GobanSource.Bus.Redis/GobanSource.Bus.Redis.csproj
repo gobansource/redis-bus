@@ -16,8 +16,8 @@
     <Description>GobanSource.Bus.Redis is a library for sending and receiving messages between services using Redis.</Description>
     <PackageTags>redis;message;bus</PackageTags>
     <PackageProjectUrl>https://github.com/gobansource/redis-bus</PackageProjectUrl>
-    <PackageLicenseUrl>https://github.com/gobansource/redis-bus/blob/main/LICENSE</PackageLicenseUrl>
 
+    <Company>Goban Source, LLC</Company>
     <RepositoryUrl>https://github.com/gobansource/redis-bus</RepositoryUrl>
   </PropertyGroup>
 
