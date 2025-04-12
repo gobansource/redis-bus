@@ -1,0 +1,91 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+
+env:
+  PROJECT_PATH: src/GobanSource.Bus.Redis/
+  PROJECT_FILE: GobanSource.Bus.Redis.csproj
+  SOLUTION_FILE: GobanSource.Bus.Redis.sln
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.0
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0" # specify your .NET Core version
+
+      - name: prepare variables for release
+        if: ${{ startsWith(github.ref,'refs/tags/v') }}
+        run: |
+          echo "ALPHA=" >> $GITHUB_ENV
+          echo "PackConfiguration=Release" >> $GITHUB_ENV
+
+      - name: prepare variables for pre-release
+        if: ${{ !startsWith(github.ref,'refs/tags/v') }}
+        run: |
+          echo "ALPHA=alpha.$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
+          echo "PackConfiguration=Debug" >> $GITHUB_ENV
+
+      - name: update version & add github nuget souce
+        run: |
+          dotnet --version
+          pwd
+          echo $ALPHA
+          sed -i "s/<\/VersionSuffix/$ALPHA<\/VersionSuffix/" $PROJECT_PATH$PROJECT_FILE
+
+      - name: restore dependencies
+        run: dotnet restore
+
+      - name: Install ReportGenerator
+        run: dotnet tool install -g dotnet-reportgenerator-globaltool
+
+      - name: build
+        run: dotnet build --no-restore
+
+      - name: test
+        run: |
+          dotnet list . package
+          dotnet test -v n --collect:"XPlat Code Coverage" /p:CollectCoverage=true /p:CoverletOutputFormat=lcov /p:CoverletOutput=lcov.info
+          ~/.dotnet/tools/reportgenerator "-reports:src/*/TestResults/*/coverage.cobertura.xml" "-reporttypes:Html;JsonSummary;TextSummary;Cobertura" "-targetdir:coverage"
+
+      - name: pack
+        run: |
+          echo $PackConfiguration
+          dotnet pack -c $PackConfiguration $PROJECT_PATH$PROJECT_FILE
+
+      - name: publish to nuget
+        if: ${{ startsWith(github.ref,'refs/tags/v') }}
+        env:
+          NUGET_KEY: ${{ secrets.NUGET_KEY }}
+        run: dotnet nuget push ${PROJECT_PATH}bin/$PackConfiguration/*.nupkg -k $NUGET_KEY -s https://api.nuget.org/v3/index.json
+
+      - name: checkout code-coverage site
+        uses: actions/checkout@v4.2.0
+        with:
+          repository: gobansource/code-coverage
+          ref: main
+          path: pages
+          #token: ${{ secrets.PAT_PUB_REPO }}
+
+      - name: upload codecoverage
+        run: |
+          mkdir -p pages/$GITHUB_REPOSITORY/$GITHUB_RUN_NUMBER
+          cp -r coverage/* pages/$GITHUB_REPOSITORY/$GITHUB_RUN_NUMBER
+          cd pages
+          C_RAGE=`grep 'Line coverage' ../coverage/Summary.txt| sed -r 's/Line coverage: (.*)/\1/'`
+          echo "{\"schemaVersion\": 1,\"label\": \"coverage\",\"message\": \"$C_RAGE\",\"color\": \"orange\"}" > $GITHUB_REPOSITORY/badge.txt
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .
+          git commit -m "codecoverage for $GITHUB_REPOSITORY #$GITHUB_RUN_NUMBER"
+          git push

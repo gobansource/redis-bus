@@ -6,6 +6,19 @@
     <LangVersion>10.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>GobanSource.Bus.Redis</AssemblyName>
+
+    <PackageId>GobanSource.Bus.Redis</PackageId>
+
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix></VersionSuffix>
+    <SourceRevisionId>$([System.DateTime]::UtcNow.ToString("yyyyMMddHHmmss"))</SourceRevisionId>
+    <Authors>GobanSource</Authors>
+    <Description>GobanSource.Bus.Redis is a library for sending and receiving messages between services using Redis.</Description>
+    <PackageTags>redis;message;bus</PackageTags>
+    <PackageProjectUrl>https://github.com/gobansource/redis-bus</PackageProjectUrl>
+    <PackageLicenseUrl>https://github.com/gobansource/redis-bus/blob/main/LICENSE</PackageLicenseUrl>
+
+    <RepositoryUrl>https://github.com/gobansource/redis-bus</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>
