@@ -39,10 +39,9 @@ jobs:
           echo "ALPHA=alpha.$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
           echo "PackConfiguration=Debug" >> $GITHUB_ENV
 
-      - name: update version & add github nuget souce
+      - name: update version
         run: |
-          dotnet --version
-          pwd
+          ./bump-version.sh
           echo $ALPHA
           sed -i "s/<\/VersionSuffix/$ALPHA<\/VersionSuffix/" $PROJECT_PATH$PROJECT_FILE
 
