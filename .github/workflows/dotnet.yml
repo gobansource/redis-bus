@@ -7,7 +7,8 @@ on:
   push:
     branches: [main]
     tags:
-      - "release*"
+      - "v*"
+      - "!v*-alpha"
   pull_request:
     branches: [main]
 
@@ -28,13 +29,13 @@ jobs:
           dotnet-version: "9.0" # specify your .NET Core version
 
       - name: prepare variables for release
-        if: ${{ startsWith(github.ref,'refs/tags/release') }}
+        if: ${{ startsWith(github.ref,'refs/tags/v') }}
         run: |
           echo "ALPHA=" >> $GITHUB_ENV
           echo "PackConfiguration=Release" >> $GITHUB_ENV
 
       - name: prepare variables for pre-release
-        if: ${{ !startsWith(github.ref,'refs/tags/release') }}
+        if: ${{ !startsWith(github.ref,'refs/tags/v') }}
         run: |
           echo "ALPHA=alpha" >> $GITHUB_ENV
           echo "PackConfiguration=Debug" >> $GITHUB_ENV
@@ -66,7 +67,7 @@ jobs:
           dotnet pack -c $PackConfiguration $PROJECT_PATH$PROJECT_FILE
 
       - name: publish to nuget
-        if: ${{ startsWith(github.ref,'refs/tags/release') }}
+        if: ${{ startsWith(github.ref,'refs/tags/v') }}
         env:
           NUGET_KEY: ${{ secrets.NUGET_KEY }}
         run: dotnet nuget push ${PROJECT_PATH}bin/$PackConfiguration/*.nupkg -k $NUGET_KEY -s https://api.nuget.org/v3/index.json
@@ -96,6 +97,8 @@ jobs:
     name: Apply tag
     needs: build
     runs-on: ubuntu-latest
+    #only run on main branch
+    if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -107,7 +110,7 @@ jobs:
           git config user.name github-actions
           git config user.email github-actions@github.com
           branch_name=$(echo $GITHUB_REF | sed 's/refs\/heads\///')
-          git tag v$(cat version.txt)-$branch_name
+          git tag v$(cat version.txt)-alpha
 
       - name: Push changes
         uses: ad-m/github-push-action@master
