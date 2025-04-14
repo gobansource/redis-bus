@@ -9,7 +9,8 @@
 
     <PackageId>GobanSource.Bus.Redis</PackageId>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <VersionPrefix>0.1.2</VersionPrefix>
+    <VersionPrefix>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../../version.txt').Trim())</VersionPrefix>
+
     <VersionSuffix></VersionSuffix>
     <SourceRevisionId>$([System.DateTime]::UtcNow.ToString("yyyyMMddHHmmss"))</SourceRevisionId>
     <Authors>GobanSource</Authors>
