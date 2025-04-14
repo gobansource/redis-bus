@@ -115,3 +115,7 @@ This project is licensed under the [MIT License](LICENSE).
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Acknowledgments
+
+- Built and maintained by [Goban Source](https://gobansource.com)

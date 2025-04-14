@@ -8,15 +8,16 @@
     <AssemblyName>GobanSource.Bus.Redis</AssemblyName>
 
     <PackageId>GobanSource.Bus.Redis</PackageId>
-
-    <VersionPrefix>0.1.0</VersionPrefix>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <VersionPrefix>0.1.1</VersionPrefix>
     <VersionSuffix></VersionSuffix>
     <SourceRevisionId>$([System.DateTime]::UtcNow.ToString("yyyyMMddHHmmss"))</SourceRevisionId>
     <Authors>GobanSource</Authors>
-    <Description>GobanSource.Bus.Redis is a library for sending and receiving messages between services using Redis.</Description>
+    <Description>A lightweight, Redis-based message bus library for .NET applications. Enables communication between distributed application instances using Redis Pub/Sub.</Description>
     <PackageTags>redis;message;bus</PackageTags>
-    <PackageProjectUrl>https://github.com/gobansource/redis-bus</PackageProjectUrl>
-
+    <PackageProjectUrl>https://gobansource.com/opensource/redis-bus</PackageProjectUrl>
+    <Copyright>Copyright © 2025 Goban Source, LLC</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Company>Goban Source, LLC</Company>
     <RepositoryUrl>https://github.com/gobansource/redis-bus</RepositoryUrl>
   </PropertyGroup>
@@ -27,6 +28,7 @@
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <None Include="../../README.md" Pack="true" PackagePath="/"/>
   </ItemGroup>
 
 </Project>
