@@ -9,7 +9,7 @@
 
     <PackageId>GobanSource.Bus.Redis</PackageId>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <VersionPrefix>0.1.1</VersionPrefix>
+    <VersionPrefix>0.1.2</VersionPrefix>
     <VersionSuffix></VersionSuffix>
     <SourceRevisionId>$([System.DateTime]::UtcNow.ToString("yyyyMMddHHmmss"))</SourceRevisionId>
     <Authors>GobanSource</Authors>
