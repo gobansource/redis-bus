@@ -1,6 +1,9 @@
 # GobanSource.Bus.Redis
 
+![build](https://github.com/gobansource/redis-bus/workflows/build/badge.svg)
+![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fgobansource.github.io%2Fcode-coverage%2Fgobansource%2Fredis-bus%2Fbadge.txt)
 [![NuGet](https://img.shields.io/nuget/v/GobanSource.Bus.Redis.svg)](https://www.nuget.org/packages/GobanSource.Bus.Redis/)
+![MyGet Version](https://img.shields.io/myget/gobansource/v/GobanSource.Bus.Redis)
 [![License](https://img.shields.io/github/license/gobansource/redis-bus)](LICENSE)
 
 A lightweight, Redis-based message bus library for .NET applications. Enables communication between distributed application instances using Redis Pub/Sub.
