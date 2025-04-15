@@ -31,18 +31,23 @@ jobs:
       - name: prepare variables for release
         if: ${{ startsWith(github.ref,'refs/tags/v') }}
         run: |
+          # Extract version from tag (remove 'refs/tags/v' prefix)
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Extracted version: $TAG_VERSION"
+          # Update version.txt with the version from tag
+          echo $TAG_VERSION > version.txt
           echo "ALPHA=" >> $GITHUB_ENV
           echo "PackConfiguration=Release" >> $GITHUB_ENV
 
       - name: prepare variables for pre-release
         if: ${{ !startsWith(github.ref,'refs/tags/v') }}
         run: |
+          ./bump-version.sh
           echo "ALPHA=alpha" >> $GITHUB_ENV
           echo "PackConfiguration=Debug" >> $GITHUB_ENV
 
       - name: update version
         run: |
-          ./bump-version.sh
           echo $ALPHA
           sed -i "s/<\/VersionSuffix/$ALPHA<\/VersionSuffix/" $PROJECT_PATH$PROJECT_FILE
 
