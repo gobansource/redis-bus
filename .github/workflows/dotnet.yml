@@ -115,7 +115,7 @@ jobs:
           MYGET_KEY: ${{ secrets.MYGET_KEY }}
         run: |
           dotnet nuget push ${PROJECT_PATH}bin/$PackConfiguration/*.nupkg -k $NUGET_KEY -s https://api.nuget.org/v3/index.json
-          dotnet nuget push ${PROJECT_PATH}bin/$PackConfiguration/*.nupkg -k $MYGET_KEY -Source https://www.myget.org/F/gobansource/api/v3/index.json
+          dotnet nuget push ${PROJECT_PATH}bin/$PackConfiguration/*.nupkg -k $MYGET_KEY -s https://www.myget.org/F/gobansource/api/v3/index.json
 
       - name: checkout code-coverage site
         uses: actions/checkout@v4.2.0
