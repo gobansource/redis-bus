@@ -1,5 +1,26 @@
 name: build
 
+# RELEASE CYCLE DOCUMENTATION
+# ------------------------------------------------------------------------------------------
+# This workflow manages the build, test, and release cycle as follows:
+#
+# 1. AUTOMATIC PRE-RELEASE (on push to main):
+#    - Builds and tests the code
+#    - Updates version.txt using bump-version.sh
+#    - Tags the commit with v{version}-alpha
+#    - No NuGet package is published
+#
+# 2. MANUAL RELEASE (on tag creation):
+#    - When you manually create and push a tag following the patterns:
+#      a. v{version} (e.g., v1.2.3) - Creates a production release
+#      b. v{version}-{suffix} (e.g., v1.2.3-beta) - Creates a pre-release
+#    - The workflow extracts the version and suffix
+#    - Updates version.txt with the base version
+#    - Builds and tests the code
+#    - Publishes the NuGet package to nuget.org
+#    - Suffix appears in the package version as expected
+# ------------------------------------------------------------------------------------------
+
 permissions:
   contents: write
 
@@ -34,22 +55,38 @@ jobs:
           # Extract version from tag (remove 'refs/tags/v' prefix)
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           echo "Extracted version: $TAG_VERSION"
-          # Update version.txt with the version from tag
-          echo $TAG_VERSION > version.txt
-          echo "ALPHA=" >> $GITHUB_ENV
+
+          # Check if tag has a suffix like -beta or -pre1
+          if [[ "$TAG_VERSION" == *-* ]]; then
+            # Split version at hyphen
+            BASE_VERSION=${TAG_VERSION%%-*}
+            VERSION_SUFFIX=${TAG_VERSION##*-}
+            echo "Base version: $BASE_VERSION, Suffix: $VERSION_SUFFIX"
+            
+            # Set the suffix to VERSION_SUFFIX
+            echo "VERSION_SUFFIX=$VERSION_SUFFIX" >> $GITHUB_ENV
+            # Update version.txt with the base version
+            echo $BASE_VERSION > version.txt
+          else
+            # No suffix, standard release
+            echo "VERSION_SUFFIX=" >> $GITHUB_ENV
+            # Update version.txt with full version
+            echo $TAG_VERSION > version.txt
+          fi
+
           echo "PackConfiguration=Release" >> $GITHUB_ENV
 
       - name: prepare variables for pre-release
         if: ${{ !startsWith(github.ref,'refs/tags/v') }}
         run: |
           ./bump-version.sh
-          echo "ALPHA=alpha" >> $GITHUB_ENV
+          echo "VERSION_SUFFIX=alpha" >> $GITHUB_ENV
           echo "PackConfiguration=Debug" >> $GITHUB_ENV
 
       - name: update version
         run: |
-          echo $ALPHA
-          sed -i "s/<\/VersionSuffix/$ALPHA<\/VersionSuffix/" $PROJECT_PATH$PROJECT_FILE
+          echo $VERSION_SUFFIX
+          sed -i "s/<\/VersionSuffix/$VERSION_SUFFIX<\/VersionSuffix/" $PROJECT_PATH$PROJECT_FILE
 
       - name: restore dependencies
         run: dotnet restore
