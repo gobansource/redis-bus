@@ -6,7 +6,8 @@
     <LangVersion>10.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>GobanSource.Bus.Redis</AssemblyName>
-
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <PackageId>GobanSource.Bus.Redis</PackageId>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <VersionPrefix>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../../version.txt').Trim())</VersionPrefix>
