@@ -294,6 +294,108 @@ public class RedisSyncBusTests
         }
     }
 
+    [TestMethod]
+    public async Task PublishAsync_WhenRedisThrows_ShouldRethrowException()
+    {
+        // Arrange
+        var message = new TestMessage
+        {
+            AppId = _appId,
+            Message = "test-message"
+        };
+
+        var expectedException = new InvalidOperationException("Redis connection failed");
+        _mockSubscriber.Setup(s => s.PublishAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<RedisValue>(),
+            It.IsAny<CommandFlags>()))
+            .ThrowsAsync(expectedException);
+
+        // Act & Assert
+        var actualException = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            () => _bus.PublishAsync(message));
+
+        Assert.AreSame(expectedException, actualException);
+    }
+
+    [TestMethod]
+    public async Task MessageHandler_WhenMessageIsNull_ShouldNotCallHandler()
+    {
+        // Arrange
+        var handlerCalled = false;
+        var handler = new Func<IMessage, Task>(_ =>
+        {
+            handlerCalled = true;
+            return Task.CompletedTask;
+        });
+
+        Action<RedisChannel, RedisValue> subscriberCallback = null!;
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
+            .Returns(Task.CompletedTask);
+
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+
+        // Act - Send empty Redis value with HasValue = false to trigger the null path
+        var emptyValue = new RedisValue();
+        subscriberCallback(new RedisChannel("test", RedisChannel.PatternMode.Auto), emptyValue);
+
+        // Assert - Handler should not be called when message is null
+        Assert.IsFalse(handlerCalled, "Handler should not be called for null messages");
+    }
+
+    [TestMethod]
+    public async Task SubscribeAsync_WhenRedisThrows_ShouldRethrowException()
+    {
+        // Arrange
+        var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
+        var expectedException = new InvalidOperationException("Redis subscription failed");
+
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .ThrowsAsync(expectedException);
+
+        // Act & Assert
+        var actualException = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            () => _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)));
+
+        Assert.AreSame(expectedException, actualException);
+    }
+
+    [TestMethod]
+    public async Task UnsubscribeAsync_WhenRedisThrows_ShouldRethrowException()
+    {
+        // Arrange
+        var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+
+        var expectedException = new InvalidOperationException("Redis unsubscription failed");
+        _mockSubscriber.Setup(s => s.UnsubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .ThrowsAsync(expectedException);
+
+        // Act & Assert  
+        var actualException = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            () => _bus.UnsubscribeAsync());
+
+        Assert.AreSame(expectedException, actualException);
+
+        // Reset the mock to avoid issues in cleanup
+        _mockSubscriber.Reset();
+        _mockSubscriber.Setup(s => s.UnsubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .Returns(Task.CompletedTask);
+    }
+
     [TestCleanup]
     public async Task Cleanup()
     {

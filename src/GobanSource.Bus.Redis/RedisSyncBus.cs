@@ -175,7 +175,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
 
                     if (message.HasValue)
                     {
-                        byte[] messageBytes = message;
+                        byte[] messageBytes = message!;
 
                         // Check for LZ4 Frame format magic number
                         if (messageBytes.Length >= LZ4FrameMagicBytes.Length &&
@@ -198,19 +198,14 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                     }
                     else
                     {
-                        messageString = message.ToString() ?? string.Empty;
+                        throw new InvalidOperationException("Message is null");
                     }
 
                     _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Message content (compressed={Compressed}): {Message}",
                         _appId, _instanceId, wasCompressed, messageString);
 
-                    var messageObj = deserializer(messageString);
-                    if (messageObj == null)
-                    {
-                        _logger.LogError("[RedisSyncBus][{AppId}][{InstanceId}] Failed to deserialize message",
-                            _appId, _instanceId);
-                        return;
-                    }
+                    TMessage messageObj = deserializer(messageString);
+
                     _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Deserialized message: AppId={AppId}, InstanceId={InstanceId}",
                         _appId, _instanceId, messageObj.AppId, messageObj.InstanceId);
 

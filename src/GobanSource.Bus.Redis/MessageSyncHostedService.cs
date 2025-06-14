@@ -44,8 +44,8 @@ public class MessageSyncHostedService<TMessage> : IHostedService where TMessage 
             nameof(MessageSyncHostedService<TMessage>), _messageTypeName);
 
         await _syncBus.SubscribeAsync(
-            async message => await MessageHandler(message),
-            json => TypedDeserializer(json));
+            MessageHandler,
+            TypedDeserializer);
 
         _logger.LogInformation("{ServiceName} started for message type {MessageType}",
             nameof(MessageSyncHostedService<TMessage>), _messageTypeName);
@@ -72,21 +72,11 @@ public class MessageSyncHostedService<TMessage> : IHostedService where TMessage 
     /// </summary>
     /// <param name="message">The received message.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    private async Task MessageHandler(IMessage message)
+    private async Task MessageHandler(TMessage message)
     {
-        // Skip messages that are not of the expected type
-        if (message is not TMessage typedMessage)
-        {
-            _logger.LogTrace("Skipping message of type {ReceivedType}, expected {ExpectedType}",
-                message.GetType().Name, _messageTypeName);
-            return;
-        }
-
-        _logger.LogDebug("Processing message of type {MessageType}", _messageTypeName);
-
         try
         {
-            await _handler.HandleAsync(typedMessage);
+            await _handler.HandleAsync(message);
         }
         catch (Exception ex)
         {
