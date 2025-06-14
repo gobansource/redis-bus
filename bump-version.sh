@@ -10,10 +10,10 @@ IFS='.' read -ra ADDR <<< "$VERSION"
 #ADDR[3]=$((ADDR[3]+1))
 
 # Use the GitHub Actions workflow run number for the last part of the version
-ADDR[3]=$GITHUB_RUN_NUMBER
+ADDR[2]=$GITHUB_RUN_NUMBER
 
 # Construct new version
-NEW_VERSION="${ADDR[0]}.${ADDR[1]}.${ADDR[2]}.${ADDR[3]}"
+NEW_VERSION="${ADDR[0]}.${ADDR[1]}.${ADDR[2]}"
 
 # Update version.txt
 echo $NEW_VERSION > version.txt

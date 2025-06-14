@@ -13,6 +13,7 @@ A lightweight, Redis-based message bus library for .NET applications. Enables co
 - **True Fan-Out Messaging**: Each message is delivered to all active subscribers across different application instances
 - **Instance Filtering**: Messages from the same instance are automatically skipped
 - **Type-Safe Message Handling**: Generic interfaces for strongly-typed message processing
+- **Optional LZ4 Compression**: Reduce bandwidth usage with fast LZ4 compression (backward compatible)
 - **No Message Persistence**: Only active subscribers receive messages (suitable for cache synchronization)
 - **Easy Integration**: Works with .NET's dependency injection and hosted services
 
@@ -71,7 +72,8 @@ services.AddTransient<IRedisSyncBus<SimpleMessage>>(sp => new RedisSyncBus<Simpl
     sp.GetRequiredService<IConnectionMultiplexer>(),
     "myapp",     // Your application ID
     "messages",  // Channel prefix
-    sp.GetRequiredService<ILogger<RedisSyncBus<SimpleMessage>>>()));
+    sp.GetRequiredService<ILogger<RedisSyncBus<SimpleMessage>>>(),
+    false));     // Enable compression (optional, defaults to false)
 
 // Register the message handler
 services.AddTransient<IMessageHandler<SimpleMessage>, SimpleMessageHandler>();
@@ -102,14 +104,47 @@ public class MessagePublisher
 }
 ```
 
+## Compression
+
+GobanSource.Bus.Redis supports optional LZ4 compression to reduce bandwidth usage and improve performance for large messages.
+
+### Enabling Compression
+
+```csharp
+// Enable compression when creating the bus
+services.AddTransient<IRedisSyncBus<SimpleMessage>>(sp => new RedisSyncBus<SimpleMessage>(
+    sp.GetRequiredService<IConnectionMultiplexer>(),
+    "myapp",
+    "messages",
+    sp.GetRequiredService<ILogger<RedisSyncBus<SimpleMessage>>>(),
+    enableCompression: true));  // Enable LZ4 compression
+```
+
+### Features
+
+- **LZ4 Frame Format**: Fast compression/decompression with good compression ratios
+- **Automatic Detection**: Compressed and uncompressed messages are automatically detected
+- **Backward Compatibility**: Applications with compression enabled can communicate with those without
+- **Performance Benefits**: Especially effective for repetitive content or large messages
+- **Transparent Operation**: No changes needed to message handlers or publishers
+
+### When to Use Compression
+
+- **Large Messages**: Messages over 1KB typically benefit from compression
+- **Repetitive Content**: JSON with repeated structures compress very well
+- **High-Volume Applications**: Reduces Redis bandwidth and network traffic
+- **Mixed Environments**: Safe to enable during gradual rollouts
+
 ## How It Works
 
 GobanSource.Bus.Redis uses Redis Pub/Sub channels to publish and subscribe to messages between different application instances. When a message is published:
 
-1. The message is serialized and published to a Redis channel with a pattern: `{prefix}:{appId}:{messageType}`
-2. Redis broadcasts the message to all subscribers of that channel
-3. Each subscriber receives and processes the message if it's from a different instance
-4. Messages from the same instance (identified by InstanceId) are automatically skipped
+1. The message is serialized to JSON
+2. If compression is enabled, the JSON is compressed using LZ4 Frame format
+3. The message (compressed or uncompressed) is published to a Redis channel: `{prefix}:{appId}:{messageType}`
+4. Redis broadcasts the message to all subscribers of that channel
+5. Each subscriber automatically detects and decompresses the message if needed
+6. Messages from the same instance (identified by InstanceId) are automatically skipped
 
 ## License
 
