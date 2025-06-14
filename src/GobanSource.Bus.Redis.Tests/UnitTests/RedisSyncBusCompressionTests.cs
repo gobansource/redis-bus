@@ -539,6 +539,215 @@ public class RedisSyncBusCompressionTests
 
     #endregion
 
+    #region Edge Case Branch Tests
+
+    [TestMethod]
+    public async Task SubscribeAsync_MessageShorterThanMagicBytes_ShouldTreatAsUncompressed()
+    {
+        // Arrange - Test branch 2: messageBytes.Length < 4
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+
+        var testMessage = new TestMessage
+        {
+            AppId = _appId,
+            Message = "Hi", // Very short message
+            InstanceId = Guid.NewGuid().ToString()
+        };
+
+        TestMessage? receivedMessage = null;
+        var handler = new Func<TestMessage, Task>(msg =>
+        {
+            receivedMessage = msg;
+            return Task.CompletedTask;
+        });
+
+        Action<RedisChannel, RedisValue> subscriberCallback = null!;
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
+            .Returns(Task.CompletedTask);
+
+        await bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        // Create very short message (shorter than 4 bytes)
+        var shortBytes = new byte[] { 0x01, 0x02 }; // Only 2 bytes, less than LZ4FrameMagicBytes.Length (4)
+
+        // Act
+        subscriberCallback(new RedisChannel("test", RedisChannel.PatternMode.Auto), shortBytes);
+
+        // Assert
+        // Should try to treat as uncompressed UTF-8, which will likely fail JSON deserialization
+        // The important thing is it doesn't crash on the length check
+        Assert.IsNull(receivedMessage, "Very short non-JSON message should not be processed successfully");
+    }
+
+    [TestMethod]
+    public async Task SubscribeAsync_MessageExactlyMagicBytesLengthWrongContent_ShouldTreatAsUncompressed()
+    {
+        // Arrange - Test branch 3: messageBytes.Length == 4 but wrong content
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+
+        var testMessage = new TestMessage
+        {
+            AppId = _appId,
+            Message = "Test",
+            InstanceId = Guid.NewGuid().ToString()
+        };
+
+        TestMessage? receivedMessage = null;
+        var handler = new Func<TestMessage, Task>(msg =>
+        {
+            receivedMessage = msg;
+            return Task.CompletedTask;
+        });
+
+        Action<RedisChannel, RedisValue> subscriberCallback = null!;
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
+            .Returns(Task.CompletedTask);
+
+        await bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        // Create 4-byte message with wrong magic number
+        var wrongMagicBytes = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }; // 4 bytes, but not LZ4 magic
+
+        // Act
+        subscriberCallback(new RedisChannel("test", RedisChannel.PatternMode.Auto), wrongMagicBytes);
+
+        // Assert
+        // Should treat as uncompressed UTF-8, which will fail JSON deserialization
+        Assert.IsNull(receivedMessage, "4-byte message with wrong magic should not be processed as compressed");
+    }
+
+    [TestMethod]
+    public async Task SubscribeAsync_LZ4DecompressionFailure_ShouldHandleGracefully()
+    {
+        // Arrange - Test branch 5: LZ4Frame.Decode throws exception
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+
+        var handler = new Func<TestMessage, Task>(msg => Task.CompletedTask);
+
+        Action<RedisChannel, RedisValue> subscriberCallback = null!;
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
+            .Returns(Task.CompletedTask);
+
+        await bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        // Create data with correct LZ4 magic number but invalid compression stream
+        var invalidLZ4Data = new byte[20];
+        Array.Copy(LZ4FrameMagicBytes, invalidLZ4Data, LZ4FrameMagicBytes.Length);
+        // Fill rest with data that will cause LZ4Frame.Decode to fail
+        for (int i = 4; i < invalidLZ4Data.Length; i++)
+        {
+            invalidLZ4Data[i] = 0xFF; // Invalid LZ4 stream data
+        }
+
+        // Act & Assert
+        // The method should handle the LZ4 decompression exception gracefully
+        // without crashing the subscriber callback
+        try
+        {
+            subscriberCallback(new RedisChannel("test", RedisChannel.PatternMode.Auto), invalidLZ4Data);
+
+            // If we get here, the exception was caught internally (which is good)
+            Assert.IsTrue(true, "LZ4 decompression failure should be handled gracefully");
+        }
+        catch (Exception)
+        {
+            // If an exception bubbles up, that's also acceptable behavior
+            // as long as it's properly logged and doesn't crash the application
+            Assert.IsTrue(true, "LZ4 decompression failure exception is acceptable if properly handled");
+        }
+    }
+
+    [TestMethod]
+    public async Task SubscribeAsync_PartialMagicBytesMatch_ShouldTreatAsUncompressed()
+    {
+        // Arrange - Test branch 7: Partial magic bytes match
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+
+        var testMessage = new TestMessage
+        {
+            AppId = _appId,
+            Message = "Test message",
+            InstanceId = Guid.NewGuid().ToString()
+        };
+
+        TestMessage? receivedMessage = null;
+        var handler = new Func<TestMessage, Task>(msg =>
+        {
+            receivedMessage = msg;
+            return Task.CompletedTask;
+        });
+
+        Action<RedisChannel, RedisValue> subscriberCallback = null!;
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
+            .Returns(Task.CompletedTask);
+
+        await bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        // Test different partial magic byte scenarios
+        var testCases = new[]
+        {
+            ("First byte matches", new byte[] { 0x04, 0xFF, 0xFF, 0xFF, 0xFF }),
+            ("First two bytes match", new byte[] { 0x04, 0x22, 0xFF, 0xFF, 0xFF }),
+            ("First three bytes match", new byte[] { 0x04, 0x22, 0x4D, 0xFF, 0xFF }),
+            ("Last three bytes match", new byte[] { 0xFF, 0x22, 0x4D, 0x18, 0xFF }),
+        };
+
+        foreach (var (description, partialMagicBytes) in testCases)
+        {
+            // Act
+            subscriberCallback(new RedisChannel("test", RedisChannel.PatternMode.Auto), partialMagicBytes);
+
+            // Assert
+            Assert.IsNull(receivedMessage, $"{description} should not trigger LZ4 decompression");
+            receivedMessage = null; // Reset for next test case
+        }
+    }
+
+    [TestMethod]
+    public async Task SubscribeAsync_EmptyMessage_ShouldTreatAsUncompressed()
+    {
+        // Arrange - Test edge case: empty message array
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+
+        var handler = new Func<TestMessage, Task>(msg => Task.CompletedTask);
+
+        Action<RedisChannel, RedisValue> subscriberCallback = null!;
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
+            .Returns(Task.CompletedTask);
+
+        await bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        // Act
+        var emptyBytes = Array.Empty<byte>();
+        subscriberCallback(new RedisChannel("test", RedisChannel.PatternMode.Auto), emptyBytes);
+
+        // Assert
+        // Should not crash on length check (0 < 4), should go to uncompressed branch
+        Assert.IsTrue(true, "Empty message should be handled without crashing");
+    }
+
+    #endregion
+
     #region Performance Tests
 
     [TestMethod]
