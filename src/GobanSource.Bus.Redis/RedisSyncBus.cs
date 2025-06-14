@@ -1,6 +1,9 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
+using System.Text;
+using K4os.Compression.LZ4.Streams;
+using System.Buffers;
 
 namespace GobanSource.Bus.Redis;
 
@@ -38,9 +41,13 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     private readonly string _channelPrefix;
     private readonly ILogger<RedisSyncBus<TMessage>> _logger;
     private readonly string _instanceId;
+    private readonly bool _enableCompression;
     private ISubscriber _subscriber;
     private bool _isSubscribed;
     private string _messageTypeName;
+
+    // LZ4 Frame format magic number: 0x184D2204
+    private static readonly byte[] LZ4FrameMagicBytes = { 0x04, 0x22, 0x4D, 0x18 };
 
     /// <summary>
     /// Initializes a new instance of the RedisSyncBus.
@@ -49,16 +56,19 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// <param name="appId">Unique identifier for the application instance group</param>
     /// <param name="channelPrefix">Prefix for Redis channels to namespace messages</param>
     /// <param name="logger">Logger for operational monitoring</param>
+    /// <param name="enableCompression">Enable LZ4 compression for messages</param>
     public RedisSyncBus(
         IConnectionMultiplexer redis,
         string appId,
         string channelPrefix,
-        ILogger<RedisSyncBus<TMessage>> logger)
+        ILogger<RedisSyncBus<TMessage>> logger,
+        bool enableCompression = false)
     {
         _redis = redis;
         _appId = appId;
         _channelPrefix = channelPrefix;
         _logger = logger;
+        _enableCompression = enableCompression;
         _instanceId = Guid.NewGuid().ToString();
         _subscriber = _redis.GetSubscriber();
         _messageTypeName = typeof(TMessage).Name;
@@ -72,6 +82,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// The message is published to a Redis channel specific to the app and cache instance.
     /// Each message includes a unique instance ID to prevent self-processing.
     /// Channel pattern: {prefix}:{appId}:{cacheInstanceId}
+    /// Messages can be optionally compressed using LZ4 compression.
     /// </remarks>
     public async Task PublishAsync(TMessage message)
     {
@@ -88,9 +99,30 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
 
         try
         {
-            _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Publishing message. Channel={Channel}",
-                _appId, _instanceId, channel);
-            await _subscriber.PublishAsync(RedisChannel.Pattern(channel), serializedMessage);
+            byte[] messageBytes;
+
+            if (_enableCompression)
+            {
+                // Compress using LZ4 Frame format
+                var jsonBytes = Encoding.UTF8.GetBytes(serializedMessage);
+                var bufferWriter = new ArrayBufferWriter<byte>();
+                var actualLength = LZ4Frame.Encode(jsonBytes.AsSpan(), bufferWriter);
+                messageBytes = bufferWriter.WrittenMemory.ToArray();
+
+                Console.WriteLine($"[DEBUG] {actualLength} Compressed message: {jsonBytes.Length} -> {messageBytes.Length} bytes ({(double)messageBytes.Length / jsonBytes.Length:P1} ratio)");
+                _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Compressed message: {OriginalSize} -> {CompressedSize} bytes",
+                    _appId, _instanceId, jsonBytes.Length, messageBytes.Length);
+            }
+            else
+            {
+                // Use uncompressed JSON as UTF-8 bytes
+                messageBytes = Encoding.UTF8.GetBytes(serializedMessage);
+                Console.WriteLine($"[DEBUG] Uncompressed message: {messageBytes.Length} bytes");
+            }
+
+            _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Publishing message. Channel={Channel}, Compressed={Compressed}",
+                _appId, _instanceId, channel, _enableCompression);
+            await _subscriber.PublishAsync(RedisChannel.Pattern(channel), messageBytes);
             Console.WriteLine($"[DEBUG] Successfully published message");
             _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Successfully published message",
                 _appId, _instanceId);
@@ -112,6 +144,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// Subscribes to a pattern matching all channels for the current app ID.
     /// Messages from the same instance (matching InstanceId) are skipped.
     /// Only processes messages matching the current AppId.
+    /// Supports both compressed (LZ4) and uncompressed messages for backward compatibility.
     /// Pattern: {prefix}:{appId}:*
     /// </remarks>
     public async Task SubscribeAsync(Func<TMessage, Task> handler, Func<string, TMessage> deserializer)
@@ -132,15 +165,51 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             await _subscriber.SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
             {
                 Console.WriteLine($"[DEBUG] Received message on channel: {channel}");
-                Console.WriteLine($"[DEBUG] Message content: {message}");
 
                 try
                 {
-                    var messageObj = deserializer(message.ToString());
-                    Console.WriteLine($"[DEBUG] Deserialized message: AppId={messageObj?.AppId}, InstanceId={messageObj?.InstanceId}");
+                    string messageString;
+                    bool wasCompressed = false;
+
+                    if (message.HasValue)
+                    {
+                        byte[] messageBytes = message;
+
+                        // Check for LZ4 Frame format magic number
+                        if (messageBytes.Length >= LZ4FrameMagicBytes.Length &&
+                            messageBytes.Take(LZ4FrameMagicBytes.Length).SequenceEqual(LZ4FrameMagicBytes))
+                        {
+                            // Decompress using LZ4 Frame format
+                            var bufferWriter = new ArrayBufferWriter<byte>();
+                            LZ4Frame.Decode(messageBytes.AsSpan(), bufferWriter);
+                            var decompressedBytes = bufferWriter.WrittenMemory.ToArray();
+                            messageString = Encoding.UTF8.GetString(decompressedBytes);
+                            wasCompressed = true;
+                            Console.WriteLine($"[DEBUG] Decompressed message: {messageBytes.Length} -> {decompressedBytes.Length} bytes");
+                        }
+                        else
+                        {
+                            // Treat as uncompressed UTF-8 string
+                            messageString = Encoding.UTF8.GetString(messageBytes);
+                        }
+                    }
+                    else
+                    {
+                        messageString = message.ToString() ?? string.Empty;
+                    }
+
+                    Console.WriteLine($"[DEBUG] Message content (compressed={wasCompressed}): {messageString}");
+
+                    var messageObj = deserializer(messageString);
+                    if (messageObj == null)
+                    {
+                        Console.WriteLine($"[DEBUG] Failed to deserialize message");
+                        return;
+                    }
+                    Console.WriteLine($"[DEBUG] Deserialized message: AppId={messageObj.AppId}, InstanceId={messageObj.InstanceId}");
 
                     // Skip messages from this instance
-                    if (messageObj?.InstanceId == _instanceId)
+                    if (messageObj.InstanceId == _instanceId)
                     {
                         Console.WriteLine($"[DEBUG] Skipping message from same instance {messageObj.InstanceId}");
                         _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Skipping message from same instance",
@@ -149,17 +218,17 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                     }
 
                     // Only process messages for this app
-                    if (messageObj?.AppId == _appId)
+                    if (messageObj.AppId == _appId)
                     {
                         Console.WriteLine($"[DEBUG] Processing message with AppId={messageObj.AppId}");
                         await handler(messageObj);
                         Console.WriteLine($"[DEBUG] Successfully processed message");
-                        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Successfully processed message",
-                            _appId, _instanceId);
+                        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Successfully processed message (compressed={Compressed})",
+                            _appId, _instanceId, wasCompressed);
                     }
                     else
                     {
-                        Console.WriteLine($"[DEBUG] Skipping message with non-matching AppId: {messageObj?.AppId} != {_appId}");
+                        Console.WriteLine($"[DEBUG] Skipping message with non-matching AppId: {messageObj.AppId} != {_appId}");
                     }
                 }
                 catch (Exception ex)
