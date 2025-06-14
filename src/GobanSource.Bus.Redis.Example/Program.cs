@@ -10,6 +10,16 @@ using System.Text.Json;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// Parse command line arguments
+var enableCompression = args.Contains("--enable-compression", StringComparer.OrdinalIgnoreCase);
+
+// Display compression status
+Console.WriteLine($"Redis Bus Compression: {(enableCompression ? "ENABLED" : "DISABLED")}");
+if (enableCompression)
+{
+    Console.WriteLine("Messages will be compressed using LZ4 compression");
+}
+
 // Configure logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -36,19 +46,22 @@ builder.Services.AddSingleton<IRedisSyncBus<OrderMessage>>(sp => new RedisSyncBu
     sp.GetRequiredService<IConnectionMultiplexer>(),
     "redis-bus-demo",
     "demo",
-    sp.GetRequiredService<ILogger<RedisSyncBus<OrderMessage>>>()));
+    sp.GetRequiredService<ILogger<RedisSyncBus<OrderMessage>>>(),
+    enableCompression));
 
 builder.Services.AddSingleton<IRedisSyncBus<NotificationMessage>>(sp => new RedisSyncBus<NotificationMessage>(
     sp.GetRequiredService<IConnectionMultiplexer>(),
     "redis-bus-demo",
     "demo",
-    sp.GetRequiredService<ILogger<RedisSyncBus<NotificationMessage>>>()));
+    sp.GetRequiredService<ILogger<RedisSyncBus<NotificationMessage>>>(),
+    enableCompression));
 
 builder.Services.AddSingleton<IRedisSyncBus<HeartbeatMessage>>(sp => new RedisSyncBus<HeartbeatMessage>(
     sp.GetRequiredService<IConnectionMultiplexer>(),
     "redis-bus-demo",
     "demo",
-    sp.GetRequiredService<ILogger<RedisSyncBus<HeartbeatMessage>>>()));
+    sp.GetRequiredService<ILogger<RedisSyncBus<HeartbeatMessage>>>(),
+    enableCompression));
 
 // Register message handlers
 builder.Services.AddTransient<IMessageHandler<OrderMessage>, OrderMessageHandler>();

@@ -89,13 +89,16 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
         message.AppId = _appId;
         // Set the instance ID for the message to track its origin
         message.InstanceId = _instanceId;
-        Console.WriteLine($"[DEBUG] Set message InstanceId to {_instanceId}");
+        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Set message InstanceId to {InstanceId}",
+            _appId, _instanceId, _instanceId);
 
         var channel = $"{_channelPrefix}:{message.AppId}:{_messageTypeName}";
-        Console.WriteLine($"[DEBUG] Publishing to channel: {channel}");
+        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Publishing to channel: {Channel}",
+            _appId, _instanceId, channel);
 
         var serializedMessage = JsonSerializer.Serialize(message, message.GetType());
-        Console.WriteLine($"[DEBUG] Serialized message: {serializedMessage}");
+        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Serialized message: {SerializedMessage}",
+            _appId, _instanceId, serializedMessage);
 
         try
         {
@@ -109,7 +112,6 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                 var actualLength = LZ4Frame.Encode(jsonBytes.AsSpan(), bufferWriter);
                 messageBytes = bufferWriter.WrittenMemory.ToArray();
 
-                Console.WriteLine($"[DEBUG] {actualLength} Compressed message: {jsonBytes.Length} -> {messageBytes.Length} bytes ({(double)messageBytes.Length / jsonBytes.Length:P1} ratio)");
                 _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Compressed message: {OriginalSize} -> {CompressedSize} bytes",
                     _appId, _instanceId, jsonBytes.Length, messageBytes.Length);
             }
@@ -117,19 +119,18 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             {
                 // Use uncompressed JSON as UTF-8 bytes
                 messageBytes = Encoding.UTF8.GetBytes(serializedMessage);
-                Console.WriteLine($"[DEBUG] Uncompressed message: {messageBytes.Length} bytes");
+                _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Uncompressed message: {MessageSize} bytes",
+                    _appId, _instanceId, messageBytes.Length);
             }
 
             _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Publishing message. Channel={Channel}, Compressed={Compressed}",
                 _appId, _instanceId, channel, _enableCompression);
             await _subscriber.PublishAsync(RedisChannel.Pattern(channel), messageBytes);
-            Console.WriteLine($"[DEBUG] Successfully published message");
             _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Successfully published message",
                 _appId, _instanceId);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DEBUG] Error publishing message: {ex.Message}");
             _logger.LogError(ex, "[RedisSyncBus][{AppId}][{InstanceId}] Error publishing message to Redis",
                 _appId, _instanceId);
             throw;
@@ -151,12 +152,12 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     {
         if (_isSubscribed)
         {
-            Console.WriteLine($"[DEBUG] Already subscribed to channel pattern");
             throw new InvalidOperationException($"[RedisSyncBus][{_appId}][{_instanceId}] Already subscribed");
         }
 
         var channel = $"{_channelPrefix}:{_appId}:{_messageTypeName}";
-        Console.WriteLine($"[DEBUG] Subscribing to channel pattern: {channel}");
+        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Subscribing to channel pattern: {Channel}",
+            _appId, _instanceId, channel);
 
         try
         {
@@ -164,7 +165,8 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                 _appId, _instanceId, channel);
             await _subscriber.SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
             {
-                Console.WriteLine($"[DEBUG] Received message on channel: {channel}");
+                _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Received message on channel: {Channel}",
+                    _appId, _instanceId, channel);
 
                 try
                 {
@@ -185,7 +187,8 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                             var decompressedBytes = bufferWriter.WrittenMemory.ToArray();
                             messageString = Encoding.UTF8.GetString(decompressedBytes);
                             wasCompressed = true;
-                            Console.WriteLine($"[DEBUG] Decompressed message: {messageBytes.Length} -> {decompressedBytes.Length} bytes");
+                            _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Decompressed message: {OriginalSize} -> {DecompressedSize} bytes",
+                                _appId, _instanceId, messageBytes.Length, decompressedBytes.Length);
                         }
                         else
                         {
@@ -198,20 +201,22 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                         messageString = message.ToString() ?? string.Empty;
                     }
 
-                    Console.WriteLine($"[DEBUG] Message content (compressed={wasCompressed}): {messageString}");
+                    _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Message content (compressed={Compressed}): {Message}",
+                        _appId, _instanceId, wasCompressed, messageString);
 
                     var messageObj = deserializer(messageString);
                     if (messageObj == null)
                     {
-                        Console.WriteLine($"[DEBUG] Failed to deserialize message");
+                        _logger.LogError("[RedisSyncBus][{AppId}][{InstanceId}] Failed to deserialize message",
+                            _appId, _instanceId);
                         return;
                     }
-                    Console.WriteLine($"[DEBUG] Deserialized message: AppId={messageObj.AppId}, InstanceId={messageObj.InstanceId}");
+                    _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Deserialized message: AppId={AppId}, InstanceId={InstanceId}",
+                        _appId, _instanceId, messageObj.AppId, messageObj.InstanceId);
 
                     // Skip messages from this instance
                     if (messageObj.InstanceId == _instanceId)
                     {
-                        Console.WriteLine($"[DEBUG] Skipping message from same instance {messageObj.InstanceId}");
                         _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Skipping message from same instance",
                             _appId, _instanceId);
                         return;
@@ -220,30 +225,32 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                     // Only process messages for this app
                     if (messageObj.AppId == _appId)
                     {
-                        Console.WriteLine($"[DEBUG] Processing message with AppId={messageObj.AppId}");
+                        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Processing message with AppId={AppId}",
+                            _appId, _instanceId, messageObj.AppId);
                         await handler(messageObj);
-                        Console.WriteLine($"[DEBUG] Successfully processed message");
+                        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Successfully processed message",
+                            _appId, _instanceId);
                         _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Successfully processed message (compressed={Compressed})",
                             _appId, _instanceId, wasCompressed);
                     }
                     else
                     {
-                        Console.WriteLine($"[DEBUG] Skipping message with non-matching AppId: {messageObj.AppId} != {_appId}");
+                        _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Skipping message with non-matching AppId: {MessageAppId} != {ExpectedAppId}",
+                            _appId, _instanceId, messageObj.AppId, _appId);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DEBUG] Error processing message: {ex.Message}");
                     _logger.LogError(ex, "[RedisSyncBus][{AppId}][{InstanceId}] Error processing message",
                         _appId, _instanceId);
                 }
             });
             _isSubscribed = true;
-            Console.WriteLine($"[DEBUG] Successfully subscribed to channel pattern: {channel}");
+            _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Successfully subscribed to channel pattern: {Channel}",
+                _appId, _instanceId, channel);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DEBUG] Error subscribing to channel: {ex.Message}");
             _logger.LogError(ex, "[RedisSyncBus][{AppId}][{InstanceId}] Error subscribing to Redis channel",
                 _appId, _instanceId);
             throw;
