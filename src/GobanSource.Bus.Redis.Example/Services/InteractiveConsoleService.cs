@@ -38,7 +38,7 @@ public class InteractiveConsoleService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             Console.ForegroundColor = _instanceColor;
-            Console.Write($"[{_instanceName}] > ");
+            Console.WriteLine($"[{_instanceName}] > ");
             Console.ResetColor();
 
             var input = await Task.Run(() => Console.ReadLine(), stoppingToken);
