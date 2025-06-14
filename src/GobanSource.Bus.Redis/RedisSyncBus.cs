@@ -109,7 +109,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                 // Compress using LZ4 Frame format
                 var jsonBytes = Encoding.UTF8.GetBytes(serializedMessage);
                 var bufferWriter = new ArrayBufferWriter<byte>();
-                var actualLength = LZ4Frame.Encode(jsonBytes.AsSpan(), bufferWriter);
+                LZ4Frame.Encode(jsonBytes.AsSpan(), bufferWriter);
                 messageBytes = bufferWriter.WrittenMemory.ToArray();
 
                 _logger.LogDebug("[RedisSyncBus][{AppId}][{InstanceId}] Compressed message: {OriginalSize} -> {CompressedSize} bytes",
