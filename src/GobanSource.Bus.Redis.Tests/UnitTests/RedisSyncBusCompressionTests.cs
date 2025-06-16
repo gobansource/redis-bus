@@ -15,7 +15,6 @@ public class RedisSyncBusCompressionTests
     private Mock<IConnectionMultiplexer> _mockRedis = null!;
     private Mock<ISubscriber> _mockSubscriber = null!;
     private ILogger<RedisSyncBus<TestMessage>> _logger = null!;
-    private string _appId = null!;
     private const string ChannelPrefix = "test-prefix";
 
     // LZ4 Frame format magic number
@@ -24,7 +23,6 @@ public class RedisSyncBusCompressionTests
     [TestInitialize]
     public void Setup()
     {
-        _appId = Guid.NewGuid().ToString();
         _mockRedis = new Mock<IConnectionMultiplexer>();
         _mockSubscriber = new Mock<ISubscriber>();
         _mockRedis.Setup(r => r.GetSubscriber(It.IsAny<object>())).Returns(_mockSubscriber.Object);
@@ -37,10 +35,9 @@ public class RedisSyncBusCompressionTests
     public async Task PublishAsync_WithCompressionEnabled_ShouldCompressMessage()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = "This is a test message that should be compressed using LZ4 compression algorithm to reduce the size of the payload when transmitted over Redis."
         };
 
@@ -79,10 +76,9 @@ public class RedisSyncBusCompressionTests
     public async Task PublishAsync_WithCompressionDisabled_ShouldNotCompressMessage()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: false);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: false);
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = "This is a test message that should NOT be compressed"
         };
 
@@ -119,10 +115,9 @@ public class RedisSyncBusCompressionTests
     public async Task PublishAsync_SmallMessage_CompressionStillApplied()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = "Small" // Very small message that might not compress well
         };
 
@@ -150,13 +145,12 @@ public class RedisSyncBusCompressionTests
     public async Task PublishAsync_LargeMessage_ShouldProvideGoodCompressionRatio()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         // Create a large, repetitive message that should compress well
         var largeMessage = string.Join("", Enumerable.Repeat("This is a repetitive message that should compress very well with LZ4 compression. ", 100));
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = largeMessage
         };
 
@@ -194,11 +188,10 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_ShouldDecompressLZ4Messages()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
         var testMessage = "This is a test message that will be compressed and then decompressed";
         var originalMessage = new TestMessage
         {
-            AppId = _appId,
             Message = testMessage,
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -232,7 +225,6 @@ public class RedisSyncBusCompressionTests
         // Assert
         Assert.IsNotNull(receivedMessage, "Message should be received and decompressed");
         Assert.AreEqual(originalMessage.Message, receivedMessage.Message);
-        Assert.AreEqual(originalMessage.AppId, receivedMessage.AppId);
         Assert.AreEqual(originalMessage.InstanceId, receivedMessage.InstanceId);
     }
 
@@ -240,11 +232,10 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_ShouldHandleUncompressedMessages()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
         var testMessage = "This is an uncompressed message";
         var originalMessage = new TestMessage
         {
-            AppId = _appId,
             Message = testMessage,
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -275,7 +266,6 @@ public class RedisSyncBusCompressionTests
         // Assert
         Assert.IsNotNull(receivedMessage, "Uncompressed message should be received and processed");
         Assert.AreEqual(originalMessage.Message, receivedMessage.Message);
-        Assert.AreEqual(originalMessage.AppId, receivedMessage.AppId);
         Assert.AreEqual(originalMessage.InstanceId, receivedMessage.InstanceId);
     }
 
@@ -283,7 +273,7 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_MixedCompressedAndUncompressed_ShouldHandleBoth()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
         var receivedMessages = new List<TestMessage>();
 
         var handler = new Func<TestMessage, Task>(msg =>
@@ -305,7 +295,6 @@ public class RedisSyncBusCompressionTests
         // Create compressed message
         var compressedMessage = new TestMessage
         {
-            AppId = _appId,
             Message = "Compressed message",
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -317,7 +306,6 @@ public class RedisSyncBusCompressionTests
         // Create uncompressed message
         var uncompressedMessage = new TestMessage
         {
-            AppId = _appId,
             Message = "Uncompressed message",
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -347,12 +335,11 @@ public class RedisSyncBusCompressionTests
     public async Task EndToEnd_CompressedPublishAndSubscribe_ShouldMaintainMessageIntegrity()
     {
         // Arrange
-        var publisherBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
-        var subscriberBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var publisherBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
+        var subscriberBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var originalMessage = new TestMessage
         {
-            AppId = _appId,
             Message = "End-to-end test message with special characters: åäö, 中文, emoji 🚀, JSON: {\"key\": \"value\"}"
         };
 
@@ -392,7 +379,6 @@ public class RedisSyncBusCompressionTests
         // Assert
         Assert.IsNotNull(receivedMessage, "Message should be received after compression/decompression");
         Assert.AreEqual(originalMessage.Message, receivedMessage.Message, "Message content should be preserved");
-        Assert.AreEqual(originalMessage.AppId, receivedMessage.AppId, "AppId should be preserved");
 
         // Verify the message was actually compressed
         var magicBytes = publishedBytes.Take(LZ4FrameMagicBytes.Length).ToArray();
@@ -403,14 +389,13 @@ public class RedisSyncBusCompressionTests
     public async Task EndToEnd_LargeMessageCompression_ShouldHandleEfficiently()
     {
         // Arrange
-        var publisherBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
-        var subscriberBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var publisherBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
+        var subscriberBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         // Create a large message with repetitive content
         var largeContent = string.Join("", Enumerable.Repeat("Large message content block with repetitive data. ", 500));
         var originalMessage = new TestMessage
         {
-            AppId = _appId,
             Message = largeContent
         };
 
@@ -461,7 +446,7 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_CorruptedCompressedData_ShouldHandleGracefully()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var exceptionThrown = false;
         var handler = new Func<TestMessage, Task>(msg => Task.CompletedTask);
@@ -502,7 +487,7 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_InvalidMagicNumber_ShouldTreatAsUncompressed()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var receivedMessage = false;
         var handler = new Func<TestMessage, Task>(msg =>
@@ -524,7 +509,6 @@ public class RedisSyncBusCompressionTests
         // Create data with different magic number but valid JSON
         var testMessage = new TestMessage
         {
-            AppId = _appId,
             Message = "Test message",
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -545,11 +529,10 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_MessageShorterThanMagicBytes_ShouldTreatAsUncompressed()
     {
         // Arrange - Test branch 2: messageBytes.Length < 4
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var testMessage = new TestMessage
         {
-            AppId = _appId,
             Message = "Hi", // Very short message
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -587,11 +570,10 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_MessageExactlyMagicBytesLengthWrongContent_ShouldTreatAsUncompressed()
     {
         // Arrange - Test branch 3: messageBytes.Length == 4 but wrong content
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var testMessage = new TestMessage
         {
-            AppId = _appId,
             Message = "Test",
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -628,7 +610,7 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_LZ4DecompressionFailure_ShouldHandleGracefully()
     {
         // Arrange - Test branch 5: LZ4Frame.Decode throws exception
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var handler = new Func<TestMessage, Task>(msg => Task.CompletedTask);
 
@@ -673,11 +655,10 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_PartialMagicBytesMatch_ShouldTreatAsUncompressed()
     {
         // Arrange - Test branch 7: Partial magic bytes match
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var testMessage = new TestMessage
         {
-            AppId = _appId,
             Message = "Test message",
             InstanceId = Guid.NewGuid().ToString()
         };
@@ -723,7 +704,7 @@ public class RedisSyncBusCompressionTests
     public async Task SubscribeAsync_EmptyMessage_ShouldTreatAsUncompressed()
     {
         // Arrange - Test edge case: empty message array
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var handler = new Func<TestMessage, Task>(msg => Task.CompletedTask);
 
@@ -754,7 +735,7 @@ public class RedisSyncBusCompressionTests
     public async Task CompressionPerformance_RepeatedContent_ShouldAchieveGoodRatio()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         var testCases = new[]
         {
@@ -766,7 +747,7 @@ public class RedisSyncBusCompressionTests
 
         foreach (var (name, content) in testCases)
         {
-            var message = new TestMessage { AppId = _appId, Message = content };
+            var message = new TestMessage { Message = content };
             byte[] compressedBytes = null!;
 
             _mockSubscriber.Setup(s => s.PublishAsync(
@@ -794,7 +775,7 @@ public class RedisSyncBusCompressionTests
     public async Task CompressionPerformance_RandomContent_ShouldHandleGracefully()
     {
         // Arrange
-        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger, enableCompression: true);
+        var bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, enableCompression: true);
 
         // Create random content that won't compress well
         var random = new Random(42); // Fixed seed for reproducible tests
@@ -802,7 +783,7 @@ public class RedisSyncBusCompressionTests
             .Select(_ => (char)random.Next(32, 127))
             .ToArray());
 
-        var message = new TestMessage { AppId = _appId, Message = randomContent };
+        var message = new TestMessage { Message = randomContent };
         byte[] compressedBytes = null!;
 
         _mockSubscriber.Setup(s => s.PublishAsync(

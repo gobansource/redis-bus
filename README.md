@@ -70,7 +70,6 @@ services.AddSingleton<IConnectionMultiplexer>(sp =>
 // Register the message bus for SimpleMessage
 services.AddTransient<IRedisSyncBus<SimpleMessage>>(sp => new RedisSyncBus<SimpleMessage>(
     sp.GetRequiredService<IConnectionMultiplexer>(),
-    "myapp",     // Your application ID
     "messages",  // Channel prefix
     sp.GetRequiredService<ILogger<RedisSyncBus<SimpleMessage>>>(),
     false));     // Enable compression (optional, defaults to false)
@@ -114,7 +113,6 @@ GobanSource.Bus.Redis supports optional LZ4 compression to reduce bandwidth usag
 // Enable compression when creating the bus
 services.AddTransient<IRedisSyncBus<SimpleMessage>>(sp => new RedisSyncBus<SimpleMessage>(
     sp.GetRequiredService<IConnectionMultiplexer>(),
-    "myapp",
     "messages",
     sp.GetRequiredService<ILogger<RedisSyncBus<SimpleMessage>>>(),
     enableCompression: true));  // Enable LZ4 compression
@@ -141,7 +139,7 @@ GobanSource.Bus.Redis uses Redis Pub/Sub channels to publish and subscribe to me
 
 1. The message is serialized to JSON
 2. If compression is enabled, the JSON is compressed using LZ4 Frame format
-3. The message (compressed or uncompressed) is published to a Redis channel: `{prefix}:{appId}:{messageType}`
+3. The message (compressed or uncompressed) is published to a Redis channel: `{prefix}:{messageType}`
 4. Redis broadcasts the message to all subscribers of that channel
 5. Each subscriber automatically detects and decompresses the message if needed
 6. Messages from the same instance (identified by InstanceId) are automatically skipped

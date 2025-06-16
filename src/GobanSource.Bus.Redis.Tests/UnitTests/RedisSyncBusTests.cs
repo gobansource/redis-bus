@@ -13,18 +13,16 @@ public class RedisSyncBusTests
     private Mock<ISubscriber> _mockSubscriber = null!;
     private ILogger<RedisSyncBus<TestMessage>> _logger = null!;
     private RedisSyncBus<TestMessage> _bus = null!;
-    private string _appId = null!;
     private const string ChannelPrefix = "test-prefix";
 
     [TestInitialize]
     public void Setup()
     {
-        _appId = Guid.NewGuid().ToString();
         _mockRedis = new Mock<IConnectionMultiplexer>();
         _mockSubscriber = new Mock<ISubscriber>();
         _mockRedis.Setup(r => r.GetSubscriber(It.IsAny<object>())).Returns(_mockSubscriber.Object);
         _logger = NullLogger<RedisSyncBus<TestMessage>>.Instance;
-        _bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, _appId, ChannelPrefix, _logger);
+        _bus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger);
     }
 
     [TestMethod]
@@ -33,7 +31,6 @@ public class RedisSyncBusTests
         // Arrange
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = "test-message"
         };
 
@@ -42,34 +39,12 @@ public class RedisSyncBusTests
 
         // Assert
         _mockSubscriber.Verify(s => s.PublishAsync(
-            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{_appId}:{typeof(TestMessage).Name}"),
+            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{typeof(TestMessage).Name}"),
             It.Is<RedisValue>(v => IsValidMessageJson(v.ToString(), message, _bus.GetInstanceId())),
             It.IsAny<CommandFlags>()),
             Times.Once);
     }
 
-    // [TestMethod]
-    // public async Task PublishAsync_WhenAppIdMismatch_ShouldThrowException()
-    // {
-    //     // Arrange
-    //     var message = new CacheMessage
-    //     {
-    //         CacheInstanceId = "test-cache",
-    //         Operation = CacheOperation.Set,
-    //         Key = "test-key",
-    //         Value = "test-value"
-    //     };
-
-    //     // Act & Assert
-    //     await Assert.ThrowsExceptionAsync<InvalidOperationException>(
-    //         () => _bus.PublishAsync(message));
-
-    //     _mockSubscriber.Verify(s => s.PublishAsync(
-    //         It.IsAny<RedisChannel>(),
-    //         It.IsAny<RedisValue>(),
-    //         It.IsAny<CommandFlags>()),
-    //         Times.Never);
-    // }
 
     [TestMethod]
     public async Task SubscribeAsync_ShouldSubscribeToCorrectChannelPattern()
@@ -82,7 +57,7 @@ public class RedisSyncBusTests
 
         // Assert
         _mockSubscriber.Verify(s => s.SubscribeAsync(
-            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{_appId}:{typeof(TestMessage).Name}"),
+            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{typeof(TestMessage).Name}"),
             It.IsAny<Action<RedisChannel, RedisValue>>(),
             It.IsAny<CommandFlags>()),
             Times.Once);
@@ -112,7 +87,7 @@ public class RedisSyncBusTests
 
         // Assert
         _mockSubscriber.Verify(s => s.UnsubscribeAsync(
-            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{_appId}:{typeof(TestMessage).Name}"),
+            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{typeof(TestMessage).Name}"),
             It.IsAny<Action<RedisChannel, RedisValue>>(),
             It.IsAny<CommandFlags>()),
             Times.Once);
@@ -155,7 +130,6 @@ public class RedisSyncBusTests
 
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = "test-message",
             InstanceId = _bus.GetInstanceId() // Same instance ID
         };
@@ -168,54 +142,17 @@ public class RedisSyncBusTests
     }
 
     [TestMethod]
-    public async Task MessageHandler_ShouldSkipMessagesFromDifferentAppId()
-    {
-        // Arrange
-        var handlerCalled = false;
-        var handler = new Func<IMessage, Task>(_ =>
-        {
-            handlerCalled = true;
-            return Task.CompletedTask;
-        });
-
-        Action<RedisChannel, RedisValue> subscriberCallback = null!;
-        _mockSubscriber.Setup(s => s.SubscribeAsync(
-            It.IsAny<RedisChannel>(),
-            It.IsAny<Action<RedisChannel, RedisValue>>(),
-            It.IsAny<CommandFlags>()))
-            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
-            .Returns(Task.CompletedTask);
-
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
-
-        var message = new TestMessage
-        {
-            AppId = "different-app-id",
-            Message = "test-message",
-            InstanceId = Guid.NewGuid().ToString()
-        };
-
-        // Act
-        subscriberCallback(new RedisChannel("test", RedisChannel.PatternMode.Auto), JsonSerializer.Serialize(message));
-
-        // Assert
-        Assert.IsFalse(handlerCalled, "Handler should not be called for messages from different AppId");
-    }
-
-    [TestMethod]
     public async Task MessageHandler_ShouldProcessValidMessages()
     {
         // Arrange
         var handlerCallCount = 0;
         string? receivedMessageId = null;
-        string? receivedAppId = null;
         string? receivedInstanceId = null;
 
         var handler = new Func<IMessage, Task>(msg =>
         {
             handlerCallCount++;
             receivedMessageId = msg.MessageId;
-            receivedAppId = msg.AppId;
             receivedInstanceId = msg.InstanceId;
             Console.WriteLine($"Handler called with message: {JsonSerializer.Serialize(msg)}");
             return Task.CompletedTask;
@@ -238,14 +175,11 @@ public class RedisSyncBusTests
         var messageInstanceId = Guid.NewGuid().ToString(); // Different instance ID
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = "test-message",
             InstanceId = messageInstanceId
         };
 
         // Capture what we expect should happen
-        Console.WriteLine($"Message AppId = {message.AppId}");
-        Console.WriteLine($"Bus AppId = {_appId}");
         Console.WriteLine($"Bus InstanceId = {_bus.GetInstanceId()}");
         Console.WriteLine($"Message InstanceId = {messageInstanceId}");
 
@@ -253,7 +187,7 @@ public class RedisSyncBusTests
         var serializedMessage = JsonSerializer.Serialize(message);
         Console.WriteLine($"Serialized message: {serializedMessage}");
 
-        var channelUsed = $"{ChannelPrefix}:{_appId}";
+        var channelUsed = $"{ChannelPrefix}:{typeof(TestMessage).Name}";
         Console.WriteLine($"Channel used for message delivery: {channelUsed}");
 
         subscriberCallback(new RedisChannel(channelUsed, RedisChannel.PatternMode.Pattern), serializedMessage);
@@ -262,11 +196,10 @@ public class RedisSyncBusTests
         Console.WriteLine($"Handler called {handlerCallCount} times");
         if (handlerCallCount > 0)
         {
-            Console.WriteLine($"Received message - MessageId: {receivedMessageId}, AppId: {receivedAppId}, InstanceId: {receivedInstanceId}");
+            Console.WriteLine($"Received message - MessageId: {receivedMessageId}, InstanceId: {receivedInstanceId}");
         }
 
         Assert.IsTrue(handlerCallCount > 0, "Handler should be called for valid messages");
-        Assert.AreEqual(_appId, receivedAppId, "Message AppId should match");
         Assert.AreEqual(messageInstanceId, receivedInstanceId, "Message InstanceId should match the one we set");
     }
 
@@ -275,13 +208,11 @@ public class RedisSyncBusTests
         try
         {
             Console.WriteLine($"[DEBUG] Validating message JSON: {json}");
-            Console.WriteLine($"[DEBUG] Expected AppId: {originalMessage.AppId}, Expected InstanceId: {expectedInstanceId}");
 
             var message = JsonSerializer.Deserialize<TestMessage>(json);
-            Console.WriteLine($"[DEBUG] Deserialized message: AppId={message?.AppId}, InstanceId={message?.InstanceId}");
+            Console.WriteLine($"[DEBUG] Deserialized message: InstanceId={message?.InstanceId}");
 
             var result = message != null &&
-                   message.AppId == originalMessage.AppId &&
                    message.InstanceId == expectedInstanceId;
 
             Console.WriteLine($"[DEBUG] JSON validation result: {result}");
@@ -300,7 +231,6 @@ public class RedisSyncBusTests
         // Arrange
         var message = new TestMessage
         {
-            AppId = _appId,
             Message = "test-message"
         };
 

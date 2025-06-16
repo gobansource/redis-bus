@@ -88,21 +88,18 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 // Register message buses
 builder.Services.AddSingleton<IRedisSyncBus<OrderMessage>>(sp => new RedisSyncBus<OrderMessage>(
     sp.GetRequiredService<IConnectionMultiplexer>(),
-    "redis-bus-demo",
     "demo",
     sp.GetRequiredService<ILogger<RedisSyncBus<OrderMessage>>>(),
     enableCompression));
 
 builder.Services.AddSingleton<IRedisSyncBus<NotificationMessage>>(sp => new RedisSyncBus<NotificationMessage>(
     sp.GetRequiredService<IConnectionMultiplexer>(),
-    "redis-bus-demo",
     "demo",
     sp.GetRequiredService<ILogger<RedisSyncBus<NotificationMessage>>>(),
     enableCompression));
 
 builder.Services.AddSingleton<IRedisSyncBus<HeartbeatMessage>>(sp => new RedisSyncBus<HeartbeatMessage>(
     sp.GetRequiredService<IConnectionMultiplexer>(),
-    "redis-bus-demo",
     "demo",
     sp.GetRequiredService<ILogger<RedisSyncBus<HeartbeatMessage>>>(),
     enableCompression));
