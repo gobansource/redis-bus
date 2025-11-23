@@ -146,8 +146,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             _logger.LogDebug("[RedisSyncBus][{InstanceId}] Publishing message. Channel={Channel}, Compression={Compression}",
                 _instanceId, channel, _compression);
             await _subscriber
-                .PublishAsync(RedisChannel.Pattern(channel), messageBytes)
-                .WaitAsync(cancellationToken);
+                .PublishAsync(RedisChannel.Pattern(channel), messageBytes);
             _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully published message",
                 _instanceId);
         }
@@ -266,8 +265,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                         _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error processing message",
                             _instanceId);
                     }
-                })
-                    .WaitAsync(cancellationToken);
+                });
                 _isSubscribed = true;
                 _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully subscribed to channel pattern: {Channel}",
                     _instanceId, channel);
@@ -305,8 +303,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             try
             {
                 await _subscriber
-                    .UnsubscribeAsync(RedisChannel.Pattern(channel))
-                    .WaitAsync(cancellationToken);
+                    .UnsubscribeAsync(RedisChannel.Pattern(channel));
                 _isSubscribed = false;
             }
             catch (Exception ex)
