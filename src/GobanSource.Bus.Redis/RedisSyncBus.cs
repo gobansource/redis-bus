@@ -42,10 +42,10 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     private readonly ILogger<RedisSyncBus<TMessage>> _logger;
     private readonly string _instanceId;
     private readonly CompressionAlgo _compression;
-    private readonly bool _enableCompression; // kept for backward-compat constructor
-    private ISubscriber _subscriber;
+    private readonly ISubscriber _subscriber;
     private bool _isSubscribed;
-    private string _messageTypeName;
+    private readonly string _messageTypeName;
+    private readonly SemaphoreSlim _subscriptionLock = new(1, 1);
 
     // LZ4 Frame format magic number: 0x184D2204
     private static readonly byte[] LZ4FrameMagicBytes = { 0x04, 0x22, 0x4D, 0x18 };
@@ -65,7 +65,6 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
         _channelPrefix = channelPrefix;
         _logger = logger;
         _compression = compression;
-        _enableCompression = compression != CompressionAlgo.None; // backwards-compat field
         _instanceId = Guid.NewGuid().ToString();
         _subscriber = _redis.GetSubscriber();
         _messageTypeName = typeof(TMessage).Name;
@@ -166,105 +165,113 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// </remarks>
     public async Task SubscribeAsync(Func<TMessage, Task> handler, Func<string, TMessage> deserializer)
     {
-        if (_isSubscribed)
-        {
-            throw new InvalidOperationException($"[RedisSyncBus][{_instanceId}] Already subscribed");
-        }
-
-        var channel = $"{_channelPrefix}:{_messageTypeName}";
-        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Subscribing to channel pattern: {Channel}",
-            _instanceId, channel);
-
+        await _subscriptionLock.WaitAsync();
         try
         {
+            if (_isSubscribed)
+            {
+                throw new InvalidOperationException($"[RedisSyncBus][{_instanceId}] Already subscribed");
+            }
+
+            var channel = $"{_channelPrefix}:{_messageTypeName}";
             _logger.LogDebug("[RedisSyncBus][{InstanceId}] Subscribing to channel pattern: {Channel}",
                 _instanceId, channel);
-            await _subscriber.SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
+
+            try
             {
-                _logger.LogDebug("[RedisSyncBus][{InstanceId}] Received message on channel: {Channel}",
+                _logger.LogDebug("[RedisSyncBus][{InstanceId}] Subscribing to channel pattern: {Channel}",
                     _instanceId, channel);
-
-                try
+                await _subscriber.SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
                 {
-                    string messageString;
-                    bool wasCompressed = false;
+                    _logger.LogDebug("[RedisSyncBus][{InstanceId}] Received message on channel: {Channel}",
+                        _instanceId, channel);
 
-                    if (message.HasValue)
+                    try
                     {
-                        byte[] messageBytes = message!;
+                        string messageString;
+                        bool wasCompressed = false;
 
-                        // Detect compression algorithm by magic number
-                        if (messageBytes.Length >= LZ4FrameMagicBytes.Length &&
-                            messageBytes.Take(LZ4FrameMagicBytes.Length).SequenceEqual(LZ4FrameMagicBytes))
+                        if (message.HasValue)
                         {
-                            // LZ4 Frame
-                            var bufferWriter = new ArrayBufferWriter<byte>();
-                            LZ4Frame.Decode(messageBytes.AsSpan(), bufferWriter);
-                            var decompressedBytes = bufferWriter.WrittenMemory.ToArray();
-                            messageString = Encoding.UTF8.GetString(decompressedBytes);
-                            wasCompressed = true;
-                            _logger.LogDebug("[RedisSyncBus][{InstanceId}] LZ4 decompressed: {Original} -> {Decompressed} bytes",
-                                _instanceId, messageBytes.Length, decompressedBytes.Length);
-                        }
-                        else if (messageBytes.Length >= ZstdFrameMagicBytes.Length &&
-                                 messageBytes.Take(ZstdFrameMagicBytes.Length).SequenceEqual(ZstdFrameMagicBytes))
-                        {
-                            // Zstd Frame
-                            var decompressedBytes = new Decompressor().Unwrap(messageBytes).ToArray();
-                            messageString = Encoding.UTF8.GetString(decompressedBytes);
-                            wasCompressed = true;
-                            _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd decompressed: {Original} -> {Decompressed} bytes",
-                                _instanceId, messageBytes.Length, decompressedBytes.Length);
+                            byte[] messageBytes = message!;
+
+                            // Detect compression algorithm by magic number
+                            if (messageBytes.Length >= LZ4FrameMagicBytes.Length &&
+                                messageBytes.Take(LZ4FrameMagicBytes.Length).SequenceEqual(LZ4FrameMagicBytes))
+                            {
+                                // LZ4 Frame
+                                var bufferWriter = new ArrayBufferWriter<byte>();
+                                LZ4Frame.Decode(messageBytes.AsSpan(), bufferWriter);
+                                var decompressedBytes = bufferWriter.WrittenMemory.ToArray();
+                                messageString = Encoding.UTF8.GetString(decompressedBytes);
+                                wasCompressed = true;
+                                _logger.LogDebug("[RedisSyncBus][{InstanceId}] LZ4 decompressed: {Original} -> {Decompressed} bytes",
+                                    _instanceId, messageBytes.Length, decompressedBytes.Length);
+                            }
+                            else if (messageBytes.Length >= ZstdFrameMagicBytes.Length &&
+                                     messageBytes.Take(ZstdFrameMagicBytes.Length).SequenceEqual(ZstdFrameMagicBytes))
+                            {
+                                // Zstd Frame
+                                var decompressedBytes = new Decompressor().Unwrap(messageBytes).ToArray();
+                                messageString = Encoding.UTF8.GetString(decompressedBytes);
+                                wasCompressed = true;
+                                _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd decompressed: {Original} -> {Decompressed} bytes",
+                                    _instanceId, messageBytes.Length, decompressedBytes.Length);
+                            }
+                            else
+                            {
+                                // Treat as plain UTF-8 JSON
+                                messageString = Encoding.UTF8.GetString(messageBytes);
+                            }
                         }
                         else
                         {
-                            // Treat as plain UTF-8 JSON
-                            messageString = Encoding.UTF8.GetString(messageBytes);
+                            throw new InvalidOperationException("Message is null");
                         }
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException("Message is null");
-                    }
 
-                    _logger.LogDebug("[RedisSyncBus][{InstanceId}] Message content (compressed={Compressed}): {Message}",
-                        _instanceId, wasCompressed, messageString);
+                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Message content (compressed={Compressed}): {Message}",
+                            _instanceId, wasCompressed, messageString);
 
-                    TMessage messageObj = deserializer(messageString);
+                        TMessage messageObj = deserializer(messageString);
 
-                    _logger.LogDebug("[RedisSyncBus][{InstanceId}] Deserialized message: InstanceId={InstanceId}",
-                        _instanceId, messageObj.InstanceId);
+                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Deserialized message: InstanceId={InstanceId}",
+                            _instanceId, messageObj.InstanceId);
 
-                    // Skip messages from this instance
-                    if (messageObj.InstanceId == _instanceId)
-                    {
-                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Skipping message from same instance",
+                        // Skip messages from this instance
+                        if (messageObj.InstanceId == _instanceId)
+                        {
+                            _logger.LogDebug("[RedisSyncBus][{InstanceId}] Skipping message from same instance",
+                                _instanceId);
+                            return;
+                        }
+
+                        // Process message if it's from a different instance
+                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Processing message",
                             _instanceId);
-                        return;
+                        await handler(messageObj);
+                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully processed message (compressed={Compressed})",
+                            _instanceId, wasCompressed);
                     }
-
-                    // Process message if it's from a different instance
-                    _logger.LogDebug("[RedisSyncBus][{InstanceId}] Processing message",
-                        _instanceId);
-                    await handler(messageObj);
-                    _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully processed message (compressed={Compressed})",
-                        _instanceId, wasCompressed);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error processing message",
-                        _instanceId);
-                }
-            });
-            _isSubscribed = true;
-            _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully subscribed to channel pattern: {Channel}",
-                _instanceId, channel);
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error processing message",
+                            _instanceId);
+                    }
+                });
+                _isSubscribed = true;
+                _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully subscribed to channel pattern: {Channel}",
+                    _instanceId, channel);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error subscribing to Redis channel",
+                    _instanceId);
+                throw;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error subscribing to Redis channel",
-                _instanceId);
-            throw;
+            _subscriptionLock.Release();
         }
     }
 
@@ -277,23 +284,29 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// </remarks>
     public async Task UnsubscribeAsync()
     {
-        if (!_isSubscribed)
-        {
-            return;
-        }
-
+        await _subscriptionLock.WaitAsync();
         try
         {
+            if (!_isSubscribed)
+            {
+                return;
+            }
             var channel = $"{_channelPrefix}:{_messageTypeName}";
-            await _subscriber.UnsubscribeAsync(RedisChannel.Pattern(channel));
-            _isSubscribed = false;
-
+            try
+            {
+                await _subscriber.UnsubscribeAsync(RedisChannel.Pattern(channel));
+                _isSubscribed = false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error unsubscribing from Redis channel",
+                    _instanceId);
+                throw;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error unsubscribing from Redis channel",
-                _instanceId);
-            throw;
+            _subscriptionLock.Release();
         }
     }
 

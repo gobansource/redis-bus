@@ -53,7 +53,7 @@ public class RedisSyncBusTests
         var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
 
         // Act
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
 
         // Assert
         _mockSubscriber.Verify(s => s.SubscribeAsync(
@@ -68,11 +68,46 @@ public class RedisSyncBusTests
     {
         // Arrange
         var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
 
         // Act & Assert
         await Assert.ThrowsExceptionAsync<InvalidOperationException>(
-            () => _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)));
+            () => _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!));
+    }
+
+    [TestMethod]
+    public async Task SubscribeAsync_WhenCalledConcurrently_ShouldAllowOnlyOneSubscription()
+    {
+        // Arrange
+        var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
+        var unblockTcs = new TaskCompletionSource();
+        var subscribeCallCount = 0;
+
+        _mockSubscriber.Setup(s => s.SubscribeAsync(
+                It.IsAny<RedisChannel>(),
+                It.IsAny<Action<RedisChannel, RedisValue>>(),
+                It.IsAny<CommandFlags>()))
+            .Returns(async () =>
+            {
+                Interlocked.Increment(ref subscribeCallCount);
+                await unblockTcs.Task;
+            });
+
+        // Act
+        var firstSubscribe = _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+        var secondSubscribe = Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            () => _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!));
+
+        unblockTcs.SetResult();
+        await Task.WhenAll(firstSubscribe, secondSubscribe);
+
+        // Assert
+        Assert.AreEqual(1, subscribeCallCount, "Only one underlying Redis subscription call should occur");
+        _mockSubscriber.Verify(s => s.SubscribeAsync(
+            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{typeof(TestMessage).Name}"),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()),
+            Times.Once);
     }
 
     [TestMethod]
@@ -80,7 +115,7 @@ public class RedisSyncBusTests
     {
         // Arrange
         var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
 
         // Act
         await _bus.UnsubscribeAsync();
@@ -108,6 +143,61 @@ public class RedisSyncBusTests
     }
 
     [TestMethod]
+    public async Task UnsubscribeAsync_WhenCalledTwiceAfterSubscribe_ShouldUnsubscribeOnlyOnce()
+    {
+        // Arrange
+        var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        // Act
+        await _bus.UnsubscribeAsync();
+        await _bus.UnsubscribeAsync();
+
+        // Assert
+        _mockSubscriber.Verify(s => s.UnsubscribeAsync(
+            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{typeof(TestMessage).Name}"),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()),
+            Times.Once);
+    }
+
+    [TestMethod]
+    public async Task UnsubscribeAsync_WhenCalledConcurrently_ShouldInvokeRedisOnce()
+    {
+        // Arrange
+        var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        var unblockTcs = new TaskCompletionSource();
+        var unsubscribeCallCount = 0;
+
+        _mockSubscriber.Setup(s => s.UnsubscribeAsync(
+                It.IsAny<RedisChannel>(),
+                It.IsAny<Action<RedisChannel, RedisValue>>(),
+                It.IsAny<CommandFlags>()))
+            .Returns(async () =>
+            {
+                Interlocked.Increment(ref unsubscribeCallCount);
+                await unblockTcs.Task;
+            });
+
+        // Act
+        var firstUnsubscribe = _bus.UnsubscribeAsync();
+        var secondUnsubscribe = _bus.UnsubscribeAsync();
+
+        unblockTcs.SetResult();
+        await Task.WhenAll(firstUnsubscribe, secondUnsubscribe);
+
+        // Assert
+        Assert.AreEqual(1, unsubscribeCallCount, "Only one underlying Redis unsubscribe call should occur");
+        _mockSubscriber.Verify(s => s.UnsubscribeAsync(
+            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{typeof(TestMessage).Name}"),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()),
+            Times.Once);
+    }
+
+    [TestMethod]
     public async Task MessageHandler_ShouldSkipMessagesFromSameInstance()
     {
         // Arrange
@@ -126,7 +216,7 @@ public class RedisSyncBusTests
             .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
             .Returns(Task.CompletedTask);
 
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
 
         var message = new TestMessage
         {
@@ -170,7 +260,7 @@ public class RedisSyncBusTests
             })
             .Returns(Task.CompletedTask);
 
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
 
         var messageInstanceId = Guid.NewGuid().ToString(); // Different instance ID
         var message = new TestMessage
@@ -267,7 +357,7 @@ public class RedisSyncBusTests
             .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>((_, callback, _) => subscriberCallback = callback)
             .Returns(Task.CompletedTask);
 
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
 
         // Act - Send empty Redis value with HasValue = false to trigger the null path
         var emptyValue = new RedisValue();
@@ -292,7 +382,7 @@ public class RedisSyncBusTests
 
         // Act & Assert
         var actualException = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
-            () => _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)));
+            () => _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!));
 
         Assert.AreSame(expectedException, actualException);
     }
@@ -302,7 +392,7 @@ public class RedisSyncBusTests
     {
         // Arrange
         var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
-        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json));
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
 
         var expectedException = new InvalidOperationException("Redis unsubscription failed");
         _mockSubscriber.Setup(s => s.UnsubscribeAsync(
@@ -324,6 +414,25 @@ public class RedisSyncBusTests
             It.IsAny<Action<RedisChannel, RedisValue>>(),
             It.IsAny<CommandFlags>()))
             .Returns(Task.CompletedTask);
+    }
+
+    [TestMethod]
+    public async Task DisposeAsync_WhenCalledTwice_ShouldUnsubscribeOnlyOnce()
+    {
+        // Arrange
+        var handler = new Func<IMessage, Task>(msg => Task.CompletedTask);
+        await _bus.SubscribeAsync(handler, json => JsonSerializer.Deserialize<TestMessage>(json)!);
+
+        // Act
+        await _bus.DisposeAsync();
+        await _bus.DisposeAsync();
+
+        // Assert
+        _mockSubscriber.Verify(s => s.UnsubscribeAsync(
+            It.Is<RedisChannel>(c => c.ToString() == $"{ChannelPrefix}:{typeof(TestMessage).Name}"),
+            It.IsAny<Action<RedisChannel, RedisValue>>(),
+            It.IsAny<CommandFlags>()),
+            Times.Once);
     }
 
     [TestCleanup]
