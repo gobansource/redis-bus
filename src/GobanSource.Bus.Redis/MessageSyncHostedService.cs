@@ -45,7 +45,8 @@ public class MessageSyncHostedService<TMessage> : IHostedService where TMessage 
 
         await _syncBus.SubscribeAsync(
             MessageHandler,
-            TypedDeserializer);
+            TypedDeserializer,
+            cancellationToken);
 
         _logger.LogInformation("{ServiceName} started for message type {MessageType}",
             nameof(MessageSyncHostedService<TMessage>), _messageTypeName);
@@ -61,7 +62,7 @@ public class MessageSyncHostedService<TMessage> : IHostedService where TMessage 
         _logger.LogInformation("Stopping {ServiceName} for message type {MessageType}",
             nameof(MessageSyncHostedService<TMessage>), _messageTypeName);
 
-        await _syncBus.UnsubscribeAsync();
+        await _syncBus.UnsubscribeAsync(cancellationToken);
 
         _logger.LogInformation("{ServiceName} stopped for message type {MessageType}",
             nameof(MessageSyncHostedService<TMessage>), _messageTypeName);

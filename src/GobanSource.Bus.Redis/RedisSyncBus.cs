@@ -4,6 +4,7 @@ using StackExchange.Redis;
 using System.Text;
 using K4os.Compression.LZ4.Streams;
 using System.Buffers;
+using System.Threading;
 using ZstdSharp;
 
 namespace GobanSource.Bus.Redis;
@@ -92,8 +93,10 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// Each message includes a unique instance ID to prevent self-processing.
     /// Messages can be optionally compressed using LZ4 compression.
     /// </remarks>
-    public async Task PublishAsync(TMessage message)
+    public async Task PublishAsync(TMessage message, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         // Set the instance ID for the message to track its origin
         message.InstanceId = _instanceId;
         _logger.LogDebug("[RedisSyncBus][{InstanceId}] Set message InstanceId to {InstanceId}",
@@ -142,7 +145,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
 
             _logger.LogDebug("[RedisSyncBus][{InstanceId}] Publishing message. Channel={Channel}, Compression={Compression}",
                 _instanceId, channel, _compression);
-            await _subscriber.PublishAsync(RedisChannel.Pattern(channel), messageBytes);
+            await _subscriber
+                .PublishAsync(RedisChannel.Pattern(channel), messageBytes)
+                .WaitAsync(cancellationToken);
             _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully published message",
                 _instanceId);
         }
@@ -163,9 +168,12 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// Supports both compressed (LZ4) and uncompressed messages for backward compatibility.
     /// Pattern: {prefix}:{messageTypeName}
     /// </remarks>
-    public async Task SubscribeAsync(Func<TMessage, Task> handler, Func<string, TMessage> deserializer)
+    public async Task SubscribeAsync(
+        Func<TMessage, Task> handler,
+        Func<string, TMessage> deserializer,
+        CancellationToken cancellationToken = default)
     {
-        await _subscriptionLock.WaitAsync();
+        await _subscriptionLock.WaitAsync(cancellationToken);
         try
         {
             if (_isSubscribed)
@@ -181,7 +189,8 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             {
                 _logger.LogDebug("[RedisSyncBus][{InstanceId}] Subscribing to channel pattern: {Channel}",
                     _instanceId, channel);
-                await _subscriber.SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
+                await _subscriber
+                    .SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
                 {
                     _logger.LogDebug("[RedisSyncBus][{InstanceId}] Received message on channel: {Channel}",
                         _instanceId, channel);
@@ -257,7 +266,8 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                         _logger.LogError(ex, "[RedisSyncBus][{InstanceId}] Error processing message",
                             _instanceId);
                     }
-                });
+                })
+                    .WaitAsync(cancellationToken);
                 _isSubscribed = true;
                 _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully subscribed to channel pattern: {Channel}",
                     _instanceId, channel);
@@ -282,9 +292,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// Safely handles multiple calls and cleans up resources.
     /// After unsubscribing, the instance will no longer receive cache updates.
     /// </remarks>
-    public async Task UnsubscribeAsync()
+    public async Task UnsubscribeAsync(CancellationToken cancellationToken = default)
     {
-        await _subscriptionLock.WaitAsync();
+        await _subscriptionLock.WaitAsync(cancellationToken);
         try
         {
             if (!_isSubscribed)
@@ -294,7 +304,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             var channel = $"{_channelPrefix}:{_messageTypeName}";
             try
             {
-                await _subscriber.UnsubscribeAsync(RedisChannel.Pattern(channel));
+                await _subscriber
+                    .UnsubscribeAsync(RedisChannel.Pattern(channel))
+                    .WaitAsync(cancellationToken);
                 _isSubscribed = false;
             }
             catch (Exception ex)

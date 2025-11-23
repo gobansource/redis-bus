@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Moq;
+using System.Threading;
 
 namespace GobanSource.Bus.Redis.Tests.UnitTests;
 
@@ -34,7 +35,10 @@ public class MessageSyncHostedServiceTests
         await _service.StartAsync(default);
 
         // Assert
-        _mockSyncBus.Verify(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()), Times.Once);
+        _mockSyncBus.Verify(x => x.SubscribeAsync(
+            It.IsAny<Func<TestMessage, Task>>(),
+            It.IsAny<Func<string, TestMessage>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [TestMethod]
@@ -44,7 +48,7 @@ public class MessageSyncHostedServiceTests
         await _service.StopAsync(default);
 
         // Assert
-        _mockSyncBus.Verify(x => x.UnsubscribeAsync(), Times.Once);
+        _mockSyncBus.Verify(x => x.UnsubscribeAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [TestMethod]
@@ -52,8 +56,11 @@ public class MessageSyncHostedServiceTests
     {
         // Arrange
         Func<TestMessage, Task>? messageHandler = null;
-        _mockSyncBus.Setup(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()))
-            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>>((handler, _) => messageHandler = handler)
+        _mockSyncBus.Setup(x => x.SubscribeAsync(
+                It.IsAny<Func<TestMessage, Task>>(),
+                It.IsAny<Func<string, TestMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>, CancellationToken>((handler, _, _) => messageHandler = handler)
             .Returns(Task.CompletedTask);
 
         await _service.StartAsync(default);
@@ -99,8 +106,11 @@ public class MessageSyncHostedServiceTests
     {
         // Arrange
         Func<TestMessage, Task>? messageHandler = null;
-        _mockSyncBus.Setup(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()))
-            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>>((handler, _) => messageHandler = handler)
+        _mockSyncBus.Setup(x => x.SubscribeAsync(
+                It.IsAny<Func<TestMessage, Task>>(),
+                It.IsAny<Func<string, TestMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>, CancellationToken>((handler, _, _) => messageHandler = handler)
             .Returns(Task.CompletedTask);
 
         await _service.StartAsync(default);
@@ -125,8 +135,11 @@ public class MessageSyncHostedServiceTests
     {
         // Arrange
         Func<string, IMessage>? deserializer = null;
-        _mockSyncBus.Setup(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()))
-            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>>((_, deserializeFunc) => deserializer = deserializeFunc)
+        _mockSyncBus.Setup(x => x.SubscribeAsync(
+                It.IsAny<Func<TestMessage, Task>>(),
+                It.IsAny<Func<string, TestMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>, CancellationToken>((_, deserializeFunc, _) => deserializer = deserializeFunc)
             .Returns(Task.CompletedTask);
 
         // Start the service which will set up the deserializer
@@ -159,8 +172,11 @@ public class MessageSyncHostedServiceTests
     {
         // Arrange
         Func<string, TestMessage>? deserializer = null;
-        _mockSyncBus.Setup(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()))
-            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>>((_, deserializeFunc) => deserializer = deserializeFunc)
+        _mockSyncBus.Setup(x => x.SubscribeAsync(
+                It.IsAny<Func<TestMessage, Task>>(),
+                It.IsAny<Func<string, TestMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>, CancellationToken>((_, deserializeFunc, _) => deserializer = deserializeFunc)
             .Returns(Task.CompletedTask);
 
         // Start the service which will set up the deserializer
@@ -181,8 +197,11 @@ public class MessageSyncHostedServiceTests
     {
         // Arrange
         Func<string, TestMessage>? deserializer = null;
-        _mockSyncBus.Setup(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()))
-            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>>((_, deserializeFunc) => deserializer = deserializeFunc)
+        _mockSyncBus.Setup(x => x.SubscribeAsync(
+                It.IsAny<Func<TestMessage, Task>>(),
+                It.IsAny<Func<string, TestMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>, CancellationToken>((_, deserializeFunc, _) => deserializer = deserializeFunc)
             .Returns(Task.CompletedTask);
 
         // Start the service which will set up the deserializer
@@ -207,8 +226,11 @@ public class MessageSyncHostedServiceTests
     {
         // Arrange
         Func<string, TestMessage>? deserializer = null;
-        _mockSyncBus.Setup(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()))
-            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>>((_, deserializeFunc) => deserializer = deserializeFunc)
+        _mockSyncBus.Setup(x => x.SubscribeAsync(
+                It.IsAny<Func<TestMessage, Task>>(),
+                It.IsAny<Func<string, TestMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>, CancellationToken>((_, deserializeFunc, _) => deserializer = deserializeFunc)
             .Returns(Task.CompletedTask);
 
         // Start the service which will set up the deserializer
@@ -232,8 +254,11 @@ public class MessageSyncHostedServiceTests
         Func<TestMessage, Task>? messageHandler = null;
         Func<string, TestMessage>? deserializer = null;
 
-        _mockSyncBus.Setup(x => x.SubscribeAsync(It.IsAny<Func<TestMessage, Task>>(), It.IsAny<Func<string, TestMessage>>()))
-            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>>((handler, deserializeFunc) =>
+        _mockSyncBus.Setup(x => x.SubscribeAsync(
+                It.IsAny<Func<TestMessage, Task>>(),
+                It.IsAny<Func<string, TestMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Func<TestMessage, Task>, Func<string, TestMessage>, CancellationToken>((handler, deserializeFunc, _) =>
             {
                 messageHandler = handler;
                 deserializer = deserializeFunc;
