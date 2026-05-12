@@ -48,7 +48,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     private readonly SemaphoreSlim _subscriptionLock = new(1, 1);
     private readonly ThreadLocal<Compressor>? _compressor;
     private readonly ThreadLocal<Decompressor> _decompressor = new(() => new Decompressor(), trackAllValues: true);
-    private bool _disposed;
+    private int _disposed;
 
     // LZ4 Frame format magic number: 0x184D2204
     private static ReadOnlySpan<byte> LZ4FrameMagicBytes => [0x04, 0x22, 0x4D, 0x18];
@@ -328,8 +328,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+        GC.SuppressFinalize(this);
 
         await UnsubscribeAsync();
 
