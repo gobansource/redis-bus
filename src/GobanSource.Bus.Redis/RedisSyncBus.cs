@@ -104,15 +104,13 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
 
         // Set the instance ID for the message to track its origin
         message.InstanceId = _instanceId;
-        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Set message InstanceId to {InstanceId}",
-            _instanceId, _instanceId);
 
         var channel = $"{_channelPrefix}:{_messageTypeName}";
         _logger.LogDebug("[RedisSyncBus][{InstanceId}] Publishing to channel: {Channel}",
             _instanceId, channel);
 
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(message);
-        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Serialized message: {MessageSize} bytes",
+        _logger.LogTrace("[RedisSyncBus][{InstanceId}] Serialized message: {MessageSize} bytes",
             _instanceId, jsonBytes.Length);
 
         try
@@ -127,7 +125,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                         LZ4Frame.Encode(jsonBytes.AsSpan(), bufferWriter);
                         messageBytes = bufferWriter.WrittenMemory.ToArray();
 
-                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] LZ4 compressed: {OriginalSize} -> {CompressedSize} bytes",
+                        _logger.LogTrace("[RedisSyncBus][{InstanceId}] LZ4 compressed: {OriginalSize} -> {CompressedSize} bytes",
                             _instanceId, jsonBytes.Length, messageBytes.Length);
                         break;
                     }
@@ -135,23 +133,21 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                     {
                         messageBytes = _compressor!.Value!.Wrap(jsonBytes).ToArray();
 
-                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd compressed: {OriginalSize} -> {CompressedSize} bytes",
+                        _logger.LogTrace("[RedisSyncBus][{InstanceId}] Zstd compressed: {OriginalSize} -> {CompressedSize} bytes",
                             _instanceId, jsonBytes.Length, messageBytes.Length);
                         break;
                     }
                 default:
                     messageBytes = jsonBytes;
-                    _logger.LogDebug("[RedisSyncBus][{InstanceId}] Uncompressed message: {MessageSize} bytes",
+                    _logger.LogTrace("[RedisSyncBus][{InstanceId}] Uncompressed message: {MessageSize} bytes",
                         _instanceId, messageBytes.Length);
                     break;
             }
 
-            _logger.LogDebug("[RedisSyncBus][{InstanceId}] Publishing message. Channel={Channel}, Compression={Compression}",
-                _instanceId, channel, _compression);
             await _subscriber
                 .PublishAsync(RedisChannel.Pattern(channel), messageBytes)
                 .WaitAsync(cancellationToken);
-            _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully published message",
+            _logger.LogTrace("[RedisSyncBus][{InstanceId}] Successfully published message",
                 _instanceId);
         }
         catch (Exception ex)
@@ -193,7 +189,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                 await _subscriber
                     .SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
                 {
-                    _logger.LogDebug("[RedisSyncBus][{InstanceId}] Received message on channel: {Channel}",
+                    _logger.LogTrace("[RedisSyncBus][{InstanceId}] Received message on channel: {Channel}",
                         _instanceId, channel);
 
                     try
@@ -216,7 +212,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                                 var decompressedBytes = bufferWriter.WrittenSpan;
                                 messageString = Encoding.UTF8.GetString(decompressedBytes);
                                 wasCompressed = true;
-                                _logger.LogDebug("[RedisSyncBus][{InstanceId}] LZ4 decompressed: {Original} -> {Decompressed} bytes",
+                                _logger.LogTrace("[RedisSyncBus][{InstanceId}] LZ4 decompressed: {Original} -> {Decompressed} bytes",
                                     _instanceId, messageBytes.Length, decompressedBytes.Length);
                             }
                             else if (messageBytes.Length >= 4 &&
@@ -226,7 +222,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                                 var decompressedBytes = _decompressor.Value!.Unwrap(messageBytes).ToArray();
                                 messageString = Encoding.UTF8.GetString(decompressedBytes);
                                 wasCompressed = true;
-                                _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd decompressed: {Original} -> {Decompressed} bytes",
+                                _logger.LogTrace("[RedisSyncBus][{InstanceId}] Zstd decompressed: {Original} -> {Decompressed} bytes",
                                     _instanceId, messageBytes.Length, decompressedBytes.Length);
                             }
                             else
@@ -240,28 +236,23 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                             throw new InvalidOperationException("Message is null");
                         }
 
-                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Message content (compressed={Compressed}): {Message}",
-                            _instanceId, wasCompressed, messageString);
-
                         TMessage messageObj = deserializer(messageString);
 
-                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Deserialized message: InstanceId={InstanceId}",
+                        _logger.LogTrace("[RedisSyncBus][{InstanceId}] Deserialized message from InstanceId={MessageInstanceId}",
                             _instanceId, messageObj.InstanceId);
 
                         // Skip messages from this instance
                         if (messageObj.InstanceId == _instanceId)
                         {
-                            _logger.LogDebug("[RedisSyncBus][{InstanceId}] Skipping message from same instance",
+                            _logger.LogTrace("[RedisSyncBus][{InstanceId}] Skipping message from same instance",
                                 _instanceId);
                             return;
                         }
 
                         // Process message if it's from a different instance
-                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Processing message",
-                            _instanceId);
                         await handler(messageObj);
-                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully processed message (compressed={Compressed})",
-                            _instanceId, wasCompressed);
+                        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Processed message from {MessageInstanceId} (compressed={Compressed})",
+                            _instanceId, messageObj.InstanceId, wasCompressed);
                     }
                     catch (Exception ex)
                     {

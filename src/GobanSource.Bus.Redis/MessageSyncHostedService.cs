@@ -90,7 +90,7 @@ public class MessageSyncHostedService<TMessage> : IHostedService where TMessage 
     {
         try
         {
-            _logger.LogDebug("Deserializing message as {MessageType}", _messageTypeName);
+            _logger.LogTrace("Deserializing message as {MessageType}", _messageTypeName);
 
             // Deserialize directly to the expected message type
             var message = JsonSerializer.Deserialize<TMessage>(json);
