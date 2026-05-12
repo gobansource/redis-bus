@@ -435,6 +435,60 @@ public class RedisSyncBusTests
             Times.Once);
     }
 
+    [TestMethod]
+    public async Task DisposeAsync_WithZstdCompression_ShouldDisposeCompressorAndDecompressor()
+    {
+        // Arrange - create a Zstd bus and use it so ThreadLocal values are created
+        var zstdBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, CompressionAlgo.Zstd);
+
+        byte[] capturedBytes = null!;
+        _mockSubscriber.Setup(s => s.PublishAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<RedisValue>(),
+            It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, RedisValue, CommandFlags>((_, value, _) => capturedBytes = value)
+            .Returns(Task.FromResult(1L));
+
+        // Publish to force compressor creation
+        await zstdBus.PublishAsync(new TestMessage { Message = "test" });
+        Assert.IsNotNull(capturedBytes, "Compressed bytes should be captured");
+
+        // Act - dispose should not throw
+        await zstdBus.DisposeAsync();
+
+        // Assert - publishing after dispose should fail because compressor is disposed
+        await Assert.ThrowsExceptionAsync<ObjectDisposedException>(
+            () => zstdBus.PublishAsync(new TestMessage { Message = "after-dispose" }));
+    }
+
+    [TestMethod]
+    public async Task DisposeAsync_WithNoCompression_ShouldDisposeDecompressorWithoutError()
+    {
+        // Arrange - default bus has no compressor, only decompressor
+        // Act & Assert - should not throw
+        await _bus.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task DisposeAsync_WithZstdCompression_CalledConcurrently_ShouldDisposeOnlyOnce()
+    {
+        // Arrange
+        var zstdBus = new RedisSyncBus<TestMessage>(_mockRedis.Object, ChannelPrefix, _logger, CompressionAlgo.Zstd);
+
+        _mockSubscriber.Setup(s => s.PublishAsync(
+            It.IsAny<RedisChannel>(),
+            It.IsAny<RedisValue>(),
+            It.IsAny<CommandFlags>()))
+            .Returns(Task.FromResult(1L));
+
+        await zstdBus.PublishAsync(new TestMessage { Message = "test" });
+
+        // Act - concurrent dispose calls should not throw
+        var task1 = zstdBus.DisposeAsync();
+        var task2 = zstdBus.DisposeAsync();
+        await Task.WhenAll(task1.AsTask(), task2.AsTask());
+    }
+
     [TestCleanup]
     public async Task Cleanup()
     {
