@@ -46,8 +46,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     private bool _isSubscribed;
     private readonly string _messageTypeName;
     private readonly SemaphoreSlim _subscriptionLock = new(1, 1);
-    private readonly Compressor? _compressor;
-    private readonly Decompressor _decompressor = new();
+    private readonly ThreadLocal<Compressor>? _compressor;
+    private readonly ThreadLocal<Decompressor> _decompressor = new(() => new Decompressor(), trackAllValues: true);
+    private bool _disposed;
 
     // LZ4 Frame format magic number: 0x184D2204
     private static ReadOnlySpan<byte> LZ4FrameMagicBytes => [0x04, 0x22, 0x4D, 0x18];
@@ -70,7 +71,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
         _instanceId = Guid.NewGuid().ToString();
         _subscriber = _redis.GetSubscriber();
         _messageTypeName = typeof(TMessage).Name;
-        _compressor = _compression == CompressionAlgo.Zstd ? new Compressor(3) : null;
+        _compressor = _compression == CompressionAlgo.Zstd
+            ? new ThreadLocal<Compressor>(() => new Compressor(3), trackAllValues: true)
+            : null;
     }
 
     /// <summary>
@@ -130,7 +133,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                     }
                 case CompressionAlgo.Zstd:
                     {
-                        messageBytes = _compressor!.Wrap(jsonBytes).ToArray();
+                        messageBytes = _compressor!.Value!.Wrap(jsonBytes).ToArray();
 
                         _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd compressed: {OriginalSize} -> {CompressedSize} bytes",
                             _instanceId, jsonBytes.Length, messageBytes.Length);
@@ -182,8 +185,6 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             }
 
             var channel = $"{_channelPrefix}:{_messageTypeName}";
-            _logger.LogDebug("[RedisSyncBus][{InstanceId}] Subscribing to channel pattern: {Channel}",
-                _instanceId, channel);
 
             try
             {
@@ -192,12 +193,12 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                 await _subscriber
                     .SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
                     _logger.LogDebug("[RedisSyncBus][{InstanceId}] Received message on channel: {Channel}",
                         _instanceId, channel);
 
                     try
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         string messageString;
                         bool wasCompressed = false;
 
@@ -222,7 +223,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                                      messageBytes.AsSpan(0, 4).SequenceEqual(ZstdFrameMagicBytes))
                             {
                                 // Zstd Frame
-                                var decompressedBytes = _decompressor.Unwrap(messageBytes).ToArray();
+                                var decompressedBytes = _decompressor.Value!.Unwrap(messageBytes).ToArray();
                                 messageString = Encoding.UTF8.GetString(decompressedBytes);
                                 wasCompressed = true;
                                 _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd decompressed: {Original} -> {Decompressed} bytes",
@@ -327,12 +328,18 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (_isSubscribed)
+        if (_disposed) return;
+        _disposed = true;
+
+        await UnsubscribeAsync();
+
+        if (_compressor != null)
         {
-            await UnsubscribeAsync();
+            foreach (var c in _compressor.Values) c.Dispose();
+            _compressor.Dispose();
         }
 
-        _compressor?.Dispose();
+        foreach (var d in _decompressor.Values) d.Dispose();
         _decompressor.Dispose();
     }
 
