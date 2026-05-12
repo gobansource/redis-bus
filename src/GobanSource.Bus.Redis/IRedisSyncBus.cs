@@ -1,5 +1,3 @@
-using System.Threading;
-
 namespace GobanSource.Bus.Redis;
 
 public interface IRedisSyncBus<TMessage> : IAsyncDisposable where TMessage : IMessage

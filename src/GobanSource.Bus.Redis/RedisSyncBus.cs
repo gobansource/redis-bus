@@ -1,10 +1,9 @@
+using System.Buffers;
+using System.Text;
 using System.Text.Json;
+using K4os.Compression.LZ4.Streams;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
-using System.Text;
-using K4os.Compression.LZ4.Streams;
-using System.Buffers;
-using System.Threading;
 using ZstdSharp;
 
 namespace GobanSource.Bus.Redis;
@@ -47,11 +46,13 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
     private bool _isSubscribed;
     private readonly string _messageTypeName;
     private readonly SemaphoreSlim _subscriptionLock = new(1, 1);
+    private readonly Compressor? _compressor;
+    private readonly Decompressor _decompressor = new();
 
     // LZ4 Frame format magic number: 0x184D2204
-    private static readonly byte[] LZ4FrameMagicBytes = { 0x04, 0x22, 0x4D, 0x18 };
+    private static ReadOnlySpan<byte> LZ4FrameMagicBytes => [0x04, 0x22, 0x4D, 0x18];
     // Zstd frame magic number: 0x28B52FFD (little-endian order in payload)
-    private static readonly byte[] ZstdFrameMagicBytes = { 0x28, 0xB5, 0x2F, 0xFD };
+    private static ReadOnlySpan<byte> ZstdFrameMagicBytes => [0x28, 0xB5, 0x2F, 0xFD];
 
     /// <summary>
     /// Preferred constructor – choose compression algorithm.
@@ -69,6 +70,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
         _instanceId = Guid.NewGuid().ToString();
         _subscriber = _redis.GetSubscriber();
         _messageTypeName = typeof(TMessage).Name;
+        _compressor = _compression == CompressionAlgo.Zstd ? new Compressor(3) : null;
     }
 
     /// <summary>
@@ -106,9 +108,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
         _logger.LogDebug("[RedisSyncBus][{InstanceId}] Publishing to channel: {Channel}",
             _instanceId, channel);
 
-        var serializedMessage = JsonSerializer.Serialize(message, message.GetType());
-        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Serialized message: {SerializedMessage}",
-            _instanceId, serializedMessage);
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(message);
+        _logger.LogDebug("[RedisSyncBus][{InstanceId}] Serialized message: {MessageSize} bytes",
+            _instanceId, jsonBytes.Length);
 
         try
         {
@@ -118,7 +120,6 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             {
                 case CompressionAlgo.LZ4:
                     {
-                        var jsonBytes = Encoding.UTF8.GetBytes(serializedMessage);
                         var bufferWriter = new ArrayBufferWriter<byte>();
                         LZ4Frame.Encode(jsonBytes.AsSpan(), bufferWriter);
                         messageBytes = bufferWriter.WrittenMemory.ToArray();
@@ -129,15 +130,14 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                     }
                 case CompressionAlgo.Zstd:
                     {
-                        var jsonBytes = Encoding.UTF8.GetBytes(serializedMessage);
-                        messageBytes = new Compressor(3).Wrap(jsonBytes).ToArray();
+                        messageBytes = _compressor!.Wrap(jsonBytes).ToArray();
 
                         _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd compressed: {OriginalSize} -> {CompressedSize} bytes",
                             _instanceId, jsonBytes.Length, messageBytes.Length);
                         break;
                     }
                 default:
-                    messageBytes = Encoding.UTF8.GetBytes(serializedMessage);
+                    messageBytes = jsonBytes;
                     _logger.LogDebug("[RedisSyncBus][{InstanceId}] Uncompressed message: {MessageSize} bytes",
                         _instanceId, messageBytes.Length);
                     break;
@@ -146,7 +146,8 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             _logger.LogDebug("[RedisSyncBus][{InstanceId}] Publishing message. Channel={Channel}, Compression={Compression}",
                 _instanceId, channel, _compression);
             await _subscriber
-                .PublishAsync(RedisChannel.Pattern(channel), messageBytes);
+                .PublishAsync(RedisChannel.Pattern(channel), messageBytes)
+                .WaitAsync(cancellationToken);
             _logger.LogDebug("[RedisSyncBus][{InstanceId}] Successfully published message",
                 _instanceId);
         }
@@ -191,6 +192,7 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                 await _subscriber
                     .SubscribeAsync(RedisChannel.Pattern(channel), async (channel, message) =>
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     _logger.LogDebug("[RedisSyncBus][{InstanceId}] Received message on channel: {Channel}",
                         _instanceId, channel);
 
@@ -204,23 +206,23 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
                             byte[] messageBytes = message!;
 
                             // Detect compression algorithm by magic number
-                            if (messageBytes.Length >= LZ4FrameMagicBytes.Length &&
-                                messageBytes.Take(LZ4FrameMagicBytes.Length).SequenceEqual(LZ4FrameMagicBytes))
+                            if (messageBytes.Length >= 4 &&
+                                messageBytes.AsSpan(0, 4).SequenceEqual(LZ4FrameMagicBytes))
                             {
                                 // LZ4 Frame
                                 var bufferWriter = new ArrayBufferWriter<byte>();
                                 LZ4Frame.Decode(messageBytes.AsSpan(), bufferWriter);
-                                var decompressedBytes = bufferWriter.WrittenMemory.ToArray();
+                                var decompressedBytes = bufferWriter.WrittenSpan;
                                 messageString = Encoding.UTF8.GetString(decompressedBytes);
                                 wasCompressed = true;
                                 _logger.LogDebug("[RedisSyncBus][{InstanceId}] LZ4 decompressed: {Original} -> {Decompressed} bytes",
                                     _instanceId, messageBytes.Length, decompressedBytes.Length);
                             }
-                            else if (messageBytes.Length >= ZstdFrameMagicBytes.Length &&
-                                     messageBytes.Take(ZstdFrameMagicBytes.Length).SequenceEqual(ZstdFrameMagicBytes))
+                            else if (messageBytes.Length >= 4 &&
+                                     messageBytes.AsSpan(0, 4).SequenceEqual(ZstdFrameMagicBytes))
                             {
                                 // Zstd Frame
-                                var decompressedBytes = new Decompressor().Unwrap(messageBytes).ToArray();
+                                var decompressedBytes = _decompressor.Unwrap(messageBytes).ToArray();
                                 messageString = Encoding.UTF8.GetString(decompressedBytes);
                                 wasCompressed = true;
                                 _logger.LogDebug("[RedisSyncBus][{InstanceId}] Zstd decompressed: {Original} -> {Decompressed} bytes",
@@ -303,7 +305,8 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
             try
             {
                 await _subscriber
-                    .UnsubscribeAsync(RedisChannel.Pattern(channel));
+                    .UnsubscribeAsync(RedisChannel.Pattern(channel))
+                    .WaitAsync(cancellationToken);
                 _isSubscribed = false;
             }
             catch (Exception ex)
@@ -328,6 +331,9 @@ public class RedisSyncBus<TMessage> : IRedisSyncBus<TMessage> where TMessage : I
         {
             await UnsubscribeAsync();
         }
+
+        _compressor?.Dispose();
+        _decompressor.Dispose();
     }
 
     /// <summary>
