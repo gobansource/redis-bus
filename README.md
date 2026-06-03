@@ -152,6 +152,10 @@ This project is licensed under the [MIT License](LICENSE).
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Used By
+
+- [PushToDisplay](https://pushtodisplay.com) — an API-first real-time display board platform that pushes content to any screen via REST API, CLI, GitHub Action, or MCP server. Uses GobanSource.Bus.Redis for cross-instance cache synchronization in its .NET 10 microservices backend.
+
 ## Acknowledgments
 
 - Built and maintained by [Goban Source](https://gobansource.com)
